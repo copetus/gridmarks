@@ -1,8 +1,25 @@
 {
-  "name": "gridmarks-extension",
-  "private": true,
-  "version": "0.0.0",
+  "name": "gridmarks",
+  "private": false,
+  "version": "0.1.0",
+  "description": "A Chrome extension that rethinks bookmark management with a Google-like UI and Opera-style grid presentation.",
   "type": "module",
+  "keywords": [
+    "chrome-extension",
+    "bookmarks",
+    "react",
+    "vite",
+    "productivity"
+  ],
+  "homepage": "https://github.com/copetus/gridmarks",
+  "bugs": {
+    "url": "https://github.com/copetus/gridmarks/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/copetus/gridmarks.git"
+  },
+  "license": "MIT",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

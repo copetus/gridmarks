@@ -55,6 +55,18 @@ function isFolder(node) {
   return !node.url;
 }
 
+function isSyntheticRoot(node) {
+  return isFolder(node) && !node.title && !node.url;
+}
+
+function getVisibleRootFolders(nodes) {
+  if (nodes.length === 1 && isSyntheticRoot(nodes[0])) {
+    return (nodes[0].children ?? []).filter(isFolder);
+  }
+
+  return nodes.filter(isFolder);
+}
+
 function findNodeById(nodes, targetId) {
   for (const node of nodes) {
     if (node.id === targetId) {
@@ -164,6 +176,71 @@ function truncateDomain(hostname, maxLength = 20) {
   const tld = segments.pop() ?? "";
   const prefixLength = Math.max(6, maxLength - tld.length - 2);
   return `${hostname.slice(0, prefixLength)}…${tld}`;
+}
+
+function createMultiDragPreview(sourceElement, count, rect) {
+  const preview = document.createElement("div");
+  const isListRowPreview = Boolean(sourceElement.closest(".content-grid.is-list"));
+  const stackOffsetX = count > 1 ? 8 : 0;
+  const stackOffsetY = count > 1 ? (isListRowPreview ? 2 : 8) : 0;
+  preview.style.position = "fixed";
+  preview.style.top = "-1000px";
+  preview.style.left = "-1000px";
+  preview.style.width = `${rect.width + stackOffsetX}px`;
+  preview.style.height = `${rect.height + (isListRowPreview ? 0 : stackOffsetY)}px`;
+  preview.style.pointerEvents = "none";
+  preview.style.zIndex = "2147483647";
+  preview.style.overflow = "visible";
+
+  const createClone = () => {
+    const clone = sourceElement.cloneNode(true);
+    clone.style.position = "absolute";
+    clone.style.inset = "0 auto auto 0";
+    clone.style.width = `${rect.width}px`;
+    clone.style.height = `${rect.height}px`;
+    clone.style.margin = "0";
+    clone.style.pointerEvents = "none";
+    clone.style.boxSizing = "border-box";
+    clone.classList.add("is-drag-preview");
+
+    if (isListRowPreview) {
+      clone.querySelector(".bookmark-preview")?.remove();
+    }
+
+    return clone;
+  };
+
+  if (count > 1) {
+    const stackedClone = createClone();
+    stackedClone.style.transform = `translate(${stackOffsetX}px, ${stackOffsetY}px)`;
+    stackedClone.style.opacity = "0.92";
+    preview.appendChild(stackedClone);
+  }
+
+  const primaryClone = createClone();
+  preview.appendChild(primaryClone);
+
+  const badge = document.createElement("div");
+  badge.style.position = "absolute";
+  badge.style.top = "8px";
+  badge.style.right = "8px";
+  badge.style.display = "flex";
+  badge.style.alignItems = "center";
+  badge.style.justifyContent = "center";
+  badge.style.width = "16px";
+  badge.style.height = "16px";
+  badge.style.borderRadius = "999px";
+  badge.style.background = "#1a73e8";
+  badge.style.color = "#ffffff";
+  badge.style.fontFamily = "system-ui, Inter, sans-serif";
+  badge.style.fontSize = "10px";
+  badge.style.fontWeight = "600";
+  badge.style.lineHeight = "1";
+  badge.style.boxShadow = "0 1px 2px rgba(60, 64, 67, 0.3)";
+  badge.textContent = String(count);
+  preview.appendChild(badge);
+
+  return preview;
 }
 
 function updateNodeById(nodes, targetId, updater) {
@@ -377,14 +454,15 @@ function remapHistoryEntry(entry, idMap) {
 function TreeNode({
   depth,
   draggingNodeIds,
+  dropPlacement,
   dropTargetFolderId,
   expandedFolders,
   node,
   onDragEnd,
   onDragStart,
-  onDropOnFolder,
-  onFolderDragOver,
-  onFolderDragLeave,
+  onTreeRowDrop,
+  onTreeRowDragOver,
+  onTreeRowDragLeave,
   onOpenContextMenu,
   onSelect,
   onToggle,
@@ -401,7 +479,7 @@ function TreeNode({
       <div className="tree-node" style={{ "--depth": depth }}>
         <button
           type="button"
-          className={`tree-row ${selectedFolderId === node.id ? "is-active" : ""} ${dropTargetFolderId === node.id ? "is-drop-target" : ""} ${draggingNodeIds.includes(node.id) ? "is-dragging" : ""}`}
+          className={`tree-row ${selectedFolderId === node.id ? "is-active" : ""} ${dropTargetFolderId === node.id ? "is-drop-target" : ""} ${draggingNodeIds.includes(node.id) ? "is-dragging" : ""} ${dropPlacement?.targetId === node.id ? `is-drop-${dropPlacement.mode}` : ""}`}
           onClick={() => onSelect(node.id)}
           onDoubleClick={(event) => {
             if (!hasFolderChildren) {
@@ -419,9 +497,9 @@ function TreeNode({
           draggable
           onDragStart={(event) => onDragStart(event, node)}
           onDragEnd={onDragEnd}
-          onDragOver={(event) => onFolderDragOver(event, node.id)}
-          onDragLeave={() => onFolderDragLeave(node.id)}
-          onDrop={(event) => onDropOnFolder(event, node.id)}
+          onDragOver={(event) => onTreeRowDragOver(event, node)}
+          onDragLeave={() => onTreeRowDragLeave(node.id)}
+          onDrop={(event) => onTreeRowDrop(event, node)}
         >
           <span
             className={`tree-caret ${hasFolderChildren ? "" : "is-placeholder"} ${isExpanded ? "is-expanded" : ""}`}
@@ -437,13 +515,13 @@ function TreeNode({
           >
             {hasFolderChildren && (
               <svg viewBox="0 0 24 24">
-                <path d="M9 6l6 6-6 6" />
+                <path d="M8 5v14l8-7-8-7Z" />
               </svg>
             )}
           </span>
           <span className="tree-row-icon">
             <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M10 4H4c-1.1 0-2 .9-2 2v2h20V8c0-1.1-.9-2-2-2h-8l-2-2Zm10 6H4c-1.1 0-2 .9-2 2v6c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2v-6c0-1.1-.9-2-2-2Z" />
+              <path d="M19.5 6.5H11.7l-1.4-1.4A2 2 0 0 0 8.9 4.5H5a2 2 0 0 0-2 2v10.5a2 2 0 0 0 2 2h14.5a2 2 0 0 0 2-2V8.5a2 2 0 0 0-2-2Z" />
             </svg>
           </span>
           <span className="tree-row-title">{node.title || "Untitled"}</span>
@@ -465,14 +543,15 @@ function TreeNode({
               key={child.id}
               depth={depth + 1}
               draggingNodeIds={draggingNodeIds}
+              dropPlacement={dropPlacement}
               dropTargetFolderId={dropTargetFolderId}
               expandedFolders={expandedFolders}
               node={child}
               onDragEnd={onDragEnd}
               onDragStart={onDragStart}
-              onDropOnFolder={onDropOnFolder}
-              onFolderDragOver={onFolderDragOver}
-              onFolderDragLeave={onFolderDragLeave}
+              onTreeRowDrop={onTreeRowDrop}
+              onTreeRowDragOver={onTreeRowDragOver}
+              onTreeRowDragLeave={onTreeRowDragLeave}
               onOpenContextMenu={onOpenContextMenu}
               onSelect={onSelect}
               onToggle={onToggle}
@@ -498,11 +577,13 @@ function App() {
   const [activeMenuId, setActiveMenuId] = useState(null);
   const [sidebarContextMenu, setSidebarContextMenu] = useState(null);
   const [cardMenuPosition, setCardMenuPosition] = useState(null);
+  const [createContextMenu, setCreateContextMenu] = useState(null);
   const [bookmarkClipboard, setBookmarkClipboard] = useState(null);
   const [draggingNodeIds, setDraggingNodeIds] = useState([]);
   const [dropTargetFolderId, setDropTargetFolderId] = useState(null);
   const [dropPlacement, setDropPlacement] = useState(null);
   const [editingNode, setEditingNode] = useState(null);
+  const [createDialog, setCreateDialog] = useState(null);
   const [editDraft, setEditDraft] = useState({ title: "", url: "" });
   const [selectedItemIds, setSelectedItemIds] = useState([]);
   const [selectionAnchorId, setSelectionAnchorId] = useState(null);
@@ -510,6 +591,8 @@ function App() {
   const [undoStack, setUndoStack] = useState([]);
   const [redoStack, setRedoStack] = useState([]);
   const [dragSelection, setDragSelection] = useState(null);
+  const [dragItemMetrics, setDragItemMetrics] = useState(null);
+  const [isHeaderElevated, setIsHeaderElevated] = useState(false);
 
   const treeRef = useRef(tree);
   const selectedFolderIdRef = useRef(selectedFolderId);
@@ -529,7 +612,7 @@ function App() {
   undoStackRef.current = undoStack;
   redoStackRef.current = redoStack;
 
-  const getFirstFolderId = (nodes) => nodes.find(isFolder)?.id ?? "";
+  const getFirstFolderId = (nodes) => getVisibleRootFolders(nodes)[0]?.id ?? "";
 
   const normalizeSelectedFolderId = (nodes, folderId) => {
     const match = folderId ? findNodeById(nodes, folderId) : null;
@@ -583,7 +666,7 @@ function App() {
     setActiveMenuId(null);
     setSidebarContextMenu(null);
     setEditingNode(null);
-    setSelectedBookmarkIds([]);
+    setSelectedItemIds([]);
     setSelectionAnchorId(null);
 
     return {
@@ -785,7 +868,7 @@ function App() {
 
       try {
         const nodes = await fetchBookmarksTree();
-        const initialId = nodes[0]?.id ?? "1";
+        const initialId = getFirstFolderId(nodes) || "1";
         setTree(nodes);
         setSelectedFolderId(initialId);
         setExpandedFolders(new Set(getPathIds(nodes, initialId)));
@@ -801,7 +884,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!activeMenuId && !sidebarContextMenu) {
+    if (!activeMenuId && !sidebarContextMenu && !createContextMenu) {
       return undefined;
     }
 
@@ -818,29 +901,59 @@ function App() {
       setActiveMenuId(null);
       setSidebarContextMenu(null);
       setCardMenuPosition(null);
+      setCreateContextMenu(null);
     };
 
     window.addEventListener("pointerdown", handlePointerDown);
     return () => window.removeEventListener("pointerdown", handlePointerDown);
-  }, [activeMenuId, sidebarContextMenu]);
+  }, [activeMenuId, createContextMenu, sidebarContextMenu]);
 
   useEffect(() => {
-    if (!statusMessage) {
+    const handlePointerDown = (event) => {
+      const target = event.target;
+
+      if (
+        searchInputRef.current &&
+        target instanceof Element &&
+        !target.closest(".search-field")
+      ) {
+        searchInputRef.current.blur();
+      }
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, []);
+
+  useEffect(() => {
+    const pane = contentPaneRef.current;
+    if (!pane) {
       return undefined;
     }
 
-    const timeoutId = window.setTimeout(() => {
-      setStatusMessage("");
-    }, 2400);
+    const updateHeaderState = () => {
+      setIsHeaderElevated(pane.scrollTop > 0);
+    };
 
-    return () => window.clearTimeout(timeoutId);
-  }, [statusMessage]);
+    updateHeaderState();
+    pane.addEventListener("scroll", updateHeaderState, { passive: true });
+    return () => pane.removeEventListener("scroll", updateHeaderState);
+  }, []);
 
-  const rootFolders = useMemo(() => tree.filter(isFolder), [tree]);
-  const selectedFolder = useMemo(() => findNodeById(tree, selectedFolderId) ?? rootFolders[0] ?? null, [rootFolders, selectedFolderId, tree]);
+  const rootFolders = useMemo(() => getVisibleRootFolders(tree), [tree]);
+  const selectedFolder = useMemo(() => findNodeById(rootFolders, selectedFolderId) ?? rootFolders[0] ?? null, [rootFolders, selectedFolderId]);
   const childItems = selectedFolder?.children ?? [];
   const normalizedQuery = query.trim().toLowerCase();
-  const breadcrumbs = buildPath(tree, selectedFolder?.id ?? "");
+  const breadcrumbs = buildPath(rootFolders, selectedFolder?.id ?? "");
+  const protectedFolderIds = useMemo(
+    () =>
+      new Set(
+        rootFolders
+          .filter((node) => node.title === "Bookmarks Bar" || node.title === "Other Bookmarks")
+          .map((node) => node.id),
+      ),
+    [rootFolders],
+  );
 
   useEffect(() => {
     setSelectedItemIds([]);
@@ -864,6 +977,7 @@ function App() {
     setDraggingNodeIds([]);
     setDropTargetFolderId(null);
     setDropPlacement(null);
+    setDragItemMetrics(null);
   };
 
   const clearSelection = () => {
@@ -877,6 +991,16 @@ function App() {
       if (event.key === "Escape") {
         if (editingNode) {
           setEditingNode(null);
+          return;
+        }
+
+        if (createDialog) {
+          setCreateDialog(null);
+          return;
+        }
+
+        if (createContextMenu) {
+          setCreateContextMenu(null);
           return;
         }
 
@@ -913,11 +1037,123 @@ function App() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [clearSelection, editingNode, handleRedo, handleUndo, selectedItemIds.length]);
+  }, [clearSelection, createContextMenu, createDialog, editingNode, handleRedo, handleUndo, selectedItemIds.length]);
 
   const orderIdsWithinCurrentFolder = (ids) => {
     const idSet = new Set(ids);
     return childItems.filter((node) => idSet.has(node.id)).map((node) => node.id);
+  };
+
+  const moveFolderToFolder = async (sourceId, targetFolderId) => {
+    const beforeSnapshot = captureSnapshot();
+    const sourceNode = findNodeById(tree, sourceId);
+    const targetFolder = findNodeById(tree, targetFolderId);
+
+    if (
+      !sourceNode ||
+      !targetFolder ||
+      !isFolder(sourceNode) ||
+      !isFolder(targetFolder) ||
+      sourceId === targetFolderId ||
+      protectedFolderIds.has(sourceId)
+    ) {
+      clearDragState();
+      return;
+    }
+
+    if (folderContainsId(sourceNode, targetFolderId)) {
+      clearDragState();
+      return;
+    }
+
+    if (globalThis.chrome?.bookmarks?.move) {
+      const currentParentId = findParentId(tree, sourceId);
+      if (currentParentId !== targetFolderId) {
+        await chrome.bookmarks.move(sourceId, {
+          parentId: targetFolderId,
+          index: targetFolder.children?.length ?? 0,
+        });
+      }
+      const nextTree = await fetchBookmarksTree();
+      const afterSnapshot = commitTreeChange(nextTree);
+      pushHistoryEntry(beforeSnapshot, afterSnapshot);
+    } else {
+      const removed = removeNodeById(treeRef.current, sourceId);
+      const nextTree = insertNodeIntoFolder(removed, targetFolderId, sourceNode);
+      const afterSnapshot = commitTreeChange(nextTree);
+      pushHistoryEntry(beforeSnapshot, afterSnapshot);
+    }
+
+    clearDragState();
+  };
+
+  const moveFolderRelativeToSibling = async (sourceId, targetId, position) => {
+    const beforeSnapshot = captureSnapshot();
+    const sourceNode = findNodeById(tree, sourceId);
+    const targetNode = findNodeById(tree, targetId);
+
+    if (
+      !sourceNode ||
+      !targetNode ||
+      !isFolder(sourceNode) ||
+      !isFolder(targetNode) ||
+      sourceId === targetId ||
+      protectedFolderIds.has(sourceId) ||
+      protectedFolderIds.has(targetId)
+    ) {
+      clearDragState();
+      return;
+    }
+
+    if (folderContainsId(sourceNode, targetId)) {
+      clearDragState();
+      return;
+    }
+
+    const targetParentId = findParentId(tree, targetId);
+    const currentParentId = findParentId(tree, sourceId);
+    const targetParent = targetParentId ? findNodeById(tree, targetParentId) : null;
+    const siblingItems = targetParent ? (targetParent.children ?? []).filter(isFolder) : rootFolders;
+    const remainingIds = siblingItems.map((node) => node.id).filter((id) => id !== sourceId);
+    const targetIndex = remainingIds.findIndex((id) => id === targetId);
+
+    if (targetIndex === -1) {
+      clearDragState();
+      return;
+    }
+
+    const nextIndex = position === "before" ? targetIndex : targetIndex + 1;
+    const orderedIds = [
+      ...remainingIds.slice(0, nextIndex),
+      sourceId,
+      ...remainingIds.slice(nextIndex),
+    ];
+
+    if (globalThis.chrome?.bookmarks?.move) {
+      for (const [index, id] of orderedIds.entries()) {
+        await chrome.bookmarks.move(id, {
+          parentId: targetParentId ?? undefined,
+          index,
+        });
+      }
+      const nextTree = await fetchBookmarksTree();
+      const afterSnapshot = commitTreeChange(nextTree);
+      pushHistoryEntry(beforeSnapshot, afterSnapshot);
+    } else if (targetParentId) {
+      const nextTree = reorderChildrenInFolder(treeRef.current, targetParentId, orderedIds);
+      const afterSnapshot = commitTreeChange(nextTree);
+      pushHistoryEntry(beforeSnapshot, afterSnapshot);
+    } else {
+      const nextTree = orderedIds.map((id) => findNodeById(treeRef.current, id)).filter(Boolean);
+      const afterSnapshot = commitTreeChange(nextTree);
+      pushHistoryEntry(beforeSnapshot, afterSnapshot);
+    }
+
+    if (currentParentId !== targetParentId) {
+      setExpandedFolders((current) => new Set([...current, targetParentId].filter(Boolean)));
+    }
+
+    clearDragState();
   };
 
   const moveNodesToFolder = async (sourceIds, targetFolderId) => {
@@ -1042,15 +1278,30 @@ function App() {
 
   const handleDragStart = (event, node) => {
     event.stopPropagation();
-    event.dataTransfer.effectAllowed = "move";
+    const rect = event.currentTarget.getBoundingClientRect();
     const draggedIds =
       selectedItemIds.includes(node.id) && selectedItemIds.length > 0
         ? orderIdsWithinCurrentFolder(selectedItemIds)
         : [node.id];
+    const isMultiDrag = draggedIds.length > 1;
+    event.dataTransfer.effectAllowed = isMultiDrag ? "copyMove" : "move";
     event.dataTransfer.setData("text/plain", draggedIds.join(","));
     setActiveMenuId(null);
     setSidebarContextMenu(null);
     setDraggingNodeIds(draggedIds);
+    setDragItemMetrics({
+      width: rect.width,
+      height: rect.height,
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+    });
+
+    if (isMultiDrag) {
+      const preview = createMultiDragPreview(event.currentTarget, draggedIds.length, rect);
+      document.body.appendChild(preview);
+      event.dataTransfer.setDragImage(preview, event.clientX - rect.left, event.clientY - rect.top);
+      requestAnimationFrame(() => preview.remove());
+    }
   };
 
   const handleDragEnd = () => {
@@ -1071,10 +1322,82 @@ function App() {
     await moveNodesToFolder(sourceIds, folderId);
   };
 
+  const handleTreeRowDragOver = (event, node) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = draggingNodeIds.length > 1 ? "copy" : "move";
+
+    if (!draggingNodeIds.length || draggingNodeIds.includes(node.id)) {
+      return;
+    }
+
+    const sourceId = draggingNodeIds[0];
+    const sourceNode = findNodeById(tree, sourceId);
+
+    if (!sourceNode || !isFolder(sourceNode) || protectedFolderIds.has(sourceId)) {
+      return;
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const startThreshold = rect.top + rect.height * 0.28;
+    const endThreshold = rect.bottom - rect.height * 0.28;
+    let nextPlacement;
+
+    if (event.clientY < startThreshold) {
+      nextPlacement = { targetId: node.id, mode: "before" };
+    } else if (event.clientY > endThreshold) {
+      nextPlacement = { targetId: node.id, mode: "after" };
+    } else {
+      nextPlacement = { targetId: node.id, mode: "inside" };
+      if (dropTargetFolderId !== node.id) {
+        setDropTargetFolderId(node.id);
+      }
+    }
+
+    if (nextPlacement.mode !== "inside" && dropTargetFolderId) {
+      setDropTargetFolderId(null);
+    }
+
+    setDropPlacement((current) =>
+      current?.targetId === nextPlacement.targetId && current?.mode === nextPlacement.mode
+        ? current
+        : nextPlacement,
+    );
+  };
+
+  const handleTreeRowDragLeave = (nodeId) => {
+    setDropPlacement((current) => (current?.targetId === nodeId ? null : current));
+    if (dropTargetFolderId === nodeId) {
+      setDropTargetFolderId(null);
+    }
+  };
+
+  const handleTreeRowDrop = async (event, node) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const sourceIds = (event.dataTransfer.getData("text/plain") || draggingNodeIds.join(","))
+      .split(",")
+      .filter(Boolean);
+    const sourceId = sourceIds[0];
+
+    if (!sourceId || sourceId === node.id) {
+      clearDragState();
+      return;
+    }
+
+    if (dropPlacement?.targetId === node.id && dropPlacement.mode !== "inside") {
+      await moveFolderRelativeToSibling(sourceId, node.id, dropPlacement.mode);
+      return;
+    }
+
+    await moveFolderToFolder(sourceId, node.id);
+  };
+
   const handleFolderDragOver = (event, folderId) => {
     event.preventDefault();
     event.stopPropagation();
-    event.dataTransfer.dropEffect = "move";
+    event.dataTransfer.dropEffect = draggingNodeIds.length > 1 ? "copy" : "move";
     if (dropTargetFolderId !== folderId) {
       setDropTargetFolderId(folderId);
     }
@@ -1089,7 +1412,7 @@ function App() {
   const handleItemDragOver = (event, item) => {
     event.preventDefault();
     event.stopPropagation();
-    event.dataTransfer.dropEffect = "move";
+    event.dataTransfer.dropEffect = draggingNodeIds.length > 1 ? "copy" : "move";
 
     if (!draggingNodeIds.length || draggingNodeIds.includes(item.id)) {
       return;
@@ -1097,16 +1420,19 @@ function App() {
 
     const rect = event.currentTarget.getBoundingClientRect();
     const midpointY = rect.top + rect.height / 2;
+    const midpointX = rect.left + rect.width / 2;
     const isFolderItem = item.kind === "folder";
+    const isGridView = viewMode === "grid";
     let nextPlacement;
 
     if (isFolderItem) {
-      const topThreshold = rect.top + rect.height * 0.28;
-      const bottomThreshold = rect.bottom - rect.height * 0.28;
+      const startThreshold = isGridView ? rect.left + rect.width * 0.28 : rect.top + rect.height * 0.28;
+      const endThreshold = isGridView ? rect.right - rect.width * 0.28 : rect.bottom - rect.height * 0.28;
+      const pointerAxis = isGridView ? event.clientX : event.clientY;
 
-      if (event.clientY < topThreshold) {
+      if (pointerAxis < startThreshold) {
         nextPlacement = { targetId: item.id, mode: "before" };
-      } else if (event.clientY > bottomThreshold) {
+      } else if (pointerAxis > endThreshold) {
         nextPlacement = { targetId: item.id, mode: "after" };
       } else {
         nextPlacement = { targetId: item.id, mode: "inside" };
@@ -1115,9 +1441,18 @@ function App() {
         }
       }
     } else {
+      const dragCenterX =
+        isGridView && dragItemMetrics
+          ? event.clientX - dragItemMetrics.offsetX + dragItemMetrics.width / 2
+          : event.clientX;
+      const dragCenterY =
+        !isGridView && dragItemMetrics
+          ? event.clientY - dragItemMetrics.offsetY + dragItemMetrics.height / 2
+          : event.clientY;
+
       nextPlacement = {
         targetId: item.id,
-        mode: event.clientY < midpointY ? "before" : "after",
+        mode: isGridView ? (dragCenterX < midpointX ? "before" : "after") : dragCenterY < midpointY ? "before" : "after",
       };
     }
 
@@ -1164,6 +1499,50 @@ function App() {
     clearDragState();
   };
 
+  const openCreateDialog = (kind) => {
+    setCreateDialog({ kind });
+    setEditDraft({
+      title: "",
+      url: "",
+    });
+    setCreateContextMenu(null);
+    setActiveMenuId(null);
+    setSidebarContextMenu(null);
+    setCardMenuPosition(null);
+  };
+
+  const createNodeInCurrentFolder = async () => {
+    if (!createDialog || !selectedFolder?.id) {
+      return;
+    }
+
+    const beforeSnapshot = captureSnapshot();
+    const nextTitle = editDraft.title.trim() || (createDialog.kind === "folder" ? "Untitled folder" : "Untitled bookmark");
+    const nextUrl = editDraft.url.trim();
+
+    if (globalThis.chrome?.bookmarks?.create) {
+      await chrome.bookmarks.create({
+        parentId: selectedFolder.id,
+        title: nextTitle,
+        ...(createDialog.kind === "folder" ? {} : { url: nextUrl }),
+      });
+      const nextTree = await fetchBookmarksTree();
+      const afterSnapshot = commitTreeChange(nextTree);
+      pushHistoryEntry(beforeSnapshot, afterSnapshot);
+    } else {
+      const nextTree = insertNodeIntoFolder(treeRef.current, selectedFolder.id, {
+        id: makeLocalBookmarkId(),
+        title: nextTitle,
+        ...(createDialog.kind === "folder" ? { children: [] } : { url: nextUrl }),
+      });
+      const afterSnapshot = commitTreeChange(nextTree);
+      pushHistoryEntry(beforeSnapshot, afterSnapshot);
+    }
+
+    setCreateDialog(null);
+    setStatusMessage(createDialog.kind === "folder" ? "Folder created" : "Bookmark created");
+  };
+
   const openEditDialog = (node) => {
     setEditingNode(node);
     setEditDraft({
@@ -1172,6 +1551,8 @@ function App() {
     });
     setActiveMenuId(null);
     setSidebarContextMenu(null);
+    setCardMenuPosition(null);
+    setCreateContextMenu(null);
   };
 
   const saveEditedNode = async () => {
@@ -1206,6 +1587,10 @@ function App() {
   };
 
   const deleteNode = async (node) => {
+    if (isFolder(node) && protectedFolderIds.has(node.id)) {
+      return;
+    }
+
     const beforeSnapshot = captureSnapshot();
     const nextClipboard = bookmarkClipboard?.node.id === node.id ? null : bookmarkClipboard;
 
@@ -1280,6 +1665,10 @@ function App() {
   };
 
   const copyNode = (node, mode) => {
+    if (mode === "cut" && isFolder(node) && protectedFolderIds.has(node.id)) {
+      return;
+    }
+
     setBookmarkClipboard({
       mode,
       node: JSON.parse(JSON.stringify(node)),
@@ -1497,7 +1886,7 @@ function App() {
     setSelectedFolderId(folderId);
     setExpandedFolders((current) => {
       const next = new Set(current);
-      for (const id of getPathIds(tree, folderId)) {
+      for (const id of getPathIds(tree, folderId).slice(0, -1)) {
         next.add(id);
       }
       return next;
@@ -1518,10 +1907,32 @@ function App() {
 
   const openSidebarContextMenu = (node, x, y) => {
     setActiveMenuId(null);
+    setCardMenuPosition(null);
+    setCreateContextMenu(null);
     setSidebarContextMenu({
       id: node.id,
       x,
       y,
+    });
+  };
+
+  const openCreateContextMenu = (event) => {
+    const target = event.target;
+
+    if (
+      target instanceof Element &&
+      target.closest(".bookmark-menu, .edit-dialog, .dialog-backdrop")
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    setActiveMenuId(null);
+    setSidebarContextMenu(null);
+    setCardMenuPosition(null);
+    setCreateContextMenu({
+      x: event.clientX,
+      y: event.clientY,
     });
   };
 
@@ -1688,7 +2099,7 @@ function App() {
     if (
       target instanceof Element &&
       target.closest(
-        ".content-card, .card-menu, .bookmark-menu, .search-field, .view-toggle, .breadcrumb-item button, .selection-toolbar, .status-toast, .status-pill",
+        ".content-card, .card-menu, .bookmark-menu, .search-field, .view-toggle, .breadcrumb-item button, .selection-toolbar, .status-pill",
       )
     ) {
       return;
@@ -1709,13 +2120,16 @@ function App() {
   };
 
   const openCardMenu = (itemId, event) => {
-    const rect = event.currentTarget.getBoundingClientRect();
     const menuWidth = 270;
     const viewportPadding = 16;
-    const openUpward = rect.bottom > window.innerHeight * 0.68;
+    const cursorOffsetX = 12;
+    const cursorOffsetY = 12;
+    const preferredLeft = event.clientX + cursorOffsetX;
+    const preferredTop = event.clientY + cursorOffsetY;
+    const openUpward = preferredTop + 360 > window.innerHeight - viewportPadding;
     const left = Math.max(
       viewportPadding,
-      Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - viewportPadding),
+      Math.min(preferredLeft, window.innerWidth - menuWidth - viewportPadding),
     );
 
     setSidebarContextMenu(null);
@@ -1726,7 +2140,7 @@ function App() {
           ? null
           : {
               left,
-              top: openUpward ? rect.top - 8 : rect.bottom + 8,
+              top: openUpward ? event.clientY - cursorOffsetY : preferredTop,
               openUpward,
             },
       );
@@ -1737,6 +2151,7 @@ function App() {
   const renderFolderMenu = (item, options = {}) => {
     const bookmarkCount = collectBookmarkUrls(item).length;
     const { className = "bookmark-menu", style } = options;
+    const isProtectedFolder = protectedFolderIds.has(item.id);
 
     return (
       <div
@@ -1747,14 +2162,14 @@ function App() {
           event.stopPropagation();
         }}
       >
-        <button type="button" className="bookmark-menu-item" onClick={() => openEditDialog(item)}>
+        <button type="button" className="bookmark-menu-item" onClick={() => openEditDialog(item)} disabled={isProtectedFolder}>
           Rename
         </button>
-        <button type="button" className="bookmark-menu-item" onClick={() => deleteNode(item)}>
+        <button type="button" className="bookmark-menu-item" onClick={() => deleteNode(item)} disabled={isProtectedFolder}>
           Delete
         </button>
         <div className="bookmark-menu-divider" />
-        <button type="button" className="bookmark-menu-item" onClick={() => copyNode(item, "cut")}>
+        <button type="button" className="bookmark-menu-item" onClick={() => copyNode(item, "cut")} disabled={isProtectedFolder}>
           Cut
         </button>
         <button type="button" className="bookmark-menu-item" onClick={() => copyNode(item, "copy")}>
@@ -1874,7 +2289,7 @@ function App() {
   };
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" onContextMenu={openCreateContextMenu}>
       <aside className="sidebar">
         <nav className="folder-tree" aria-label="Bookmark folders">
           {rootFolders.map((folder) => (
@@ -1882,14 +2297,15 @@ function App() {
               key={folder.id}
               depth={0}
               draggingNodeIds={draggingNodeIds}
+              dropPlacement={dropPlacement}
               dropTargetFolderId={dropTargetFolderId}
               expandedFolders={expandedFolders}
               node={folder}
               onDragEnd={handleDragEnd}
               onDragStart={handleDragStart}
-              onDropOnFolder={handleDropOnFolder}
-              onFolderDragOver={handleFolderDragOver}
-              onFolderDragLeave={handleFolderDragLeave}
+              onTreeRowDrop={handleTreeRowDrop}
+              onTreeRowDragOver={handleTreeRowDragOver}
+              onTreeRowDragLeave={handleTreeRowDragLeave}
               onOpenContextMenu={openSidebarContextMenu}
               onSelect={handleSelectFolder}
               onToggle={handleToggleFolder}
@@ -1902,75 +2318,80 @@ function App() {
       </aside>
 
       <main ref={contentPaneRef} className="content-pane" onPointerDown={handleContentPanePointerDown}>
-        {statusMessage && <div className="status-toast">{statusMessage}</div>}
         {selectedItemIds.length > 1 && (
           <div className="selection-toolbar" role="toolbar" aria-label="Selection actions">
-            <div className="selection-toolbar-inner">
-              <button type="button" className="selection-toolbar-close" onClick={clearSelection} aria-label="Dismiss selection">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="m18.3 5.71-1.41-1.41L12 9.17 7.11 4.3 5.7 5.71 10.59 10.6 5.7 15.49l1.41 1.41L12 12.01l4.89 4.89 1.41-1.41-4.89-4.89 4.89-4.89Z" />
-                </svg>
-              </button>
-              <span className="selection-toolbar-count">{selectedItemIds.length} selected</span>
-              <button type="button" className="selection-toolbar-delete" onClick={() => void deleteSelectedItems()}>
-                Delete
-              </button>
+            <div className="selection-toolbar-main">
+              <div className="selection-toolbar-inner">
+                <button type="button" className="selection-toolbar-close" onClick={clearSelection} aria-label="Dismiss selection">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m18.3 5.71-1.41-1.41L12 9.17 7.11 4.3 5.7 5.71 10.59 10.6 5.7 15.49l1.41 1.41L12 12.01l4.89 4.89 1.41-1.41-4.89-4.89 4.89-4.89Z" />
+                  </svg>
+                </button>
+                <span className="selection-toolbar-count">{selectedItemIds.length} selected</span>
+                <button type="button" className="selection-toolbar-delete" onClick={() => void deleteSelectedItems()}>
+                  Delete
+                </button>
+              </div>
             </div>
           </div>
         )}
-        <header className="toolbar">
-          <label className="search-field">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M10 4a6 6 0 1 1 0 12 6 6 0 0 1 0-12Zm0-2a8 8 0 1 0 4.9 14.3l4.4 4.4 1.4-1.4-4.4-4.4A8 8 0 0 0 10 2Z" />
-            </svg>
-            <input
-              ref={searchInputRef}
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search bookmarks"
-            />
-            {query && (
-              <button
-                type="button"
-                className="search-clear"
-                aria-label="Clear search"
-                onClick={(event) => {
-                  event.preventDefault();
-                  setQuery("");
-                  searchInputRef.current?.focus();
-                }}
-              >
+        <div className={`content-header-shell ${isHeaderElevated ? "is-elevated" : ""}`}>
+          <div className="content-header-main">
+            <header className="toolbar">
+              <label className="search-field">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm3.59 13.17L14.17 15.59 12 13.41l-2.17 2.18-1.42-1.42L10.59 12 8.41 9.83l1.42-1.42L12 10.59l2.17-2.18 1.42 1.42L13.41 12l2.18 2.17Z" />
+                  <path d="M10 4a6 6 0 1 1 0 12 6 6 0 0 1 0-12Zm0-2a8 8 0 1 0 4.9 14.3l4.4 4.4 1.4-1.4-4.4-4.4A8 8 0 0 0 10 2Z" />
                 </svg>
-              </button>
-            )}
-          </label>
+                <input
+                  ref={searchInputRef}
+                  type="search"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search bookmarks"
+                />
+                {query && (
+                  <button
+                    type="button"
+                    className="search-clear"
+                    aria-label="Clear search"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      setQuery("");
+                      searchInputRef.current?.focus();
+                    }}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm3.59 13.17L14.17 15.59 12 13.41l-2.17 2.18-1.42-1.42L10.59 12 8.41 9.83l1.42-1.42L12 10.59l2.17-2.18 1.42 1.42L13.41 12l2.18 2.17Z" />
+                    </svg>
+                  </button>
+                )}
+              </label>
 
-          <div className="view-toggle" aria-label="View options">
-            <button
-              type="button"
-              className={viewMode === "grid" ? "is-active" : ""}
-              onClick={() => setViewMode("grid")}
-              aria-label="Grid view"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M4 4h7v7H4V4Zm9 0h7v7h-7V4ZM4 13h7v7H4v-7Zm9 0h7v7h-7v-7Z" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              className={viewMode === "list" ? "is-active" : ""}
-              onClick={() => setViewMode("list")}
-              aria-label="List view"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M4 6h16v2H4V6Zm0 5h16v2H4v-2Zm0 5h16v2H4v-2Z" />
-              </svg>
-            </button>
+              <div className="view-toggle" aria-label="View options">
+                <button
+                  type="button"
+                  className={viewMode === "grid" ? "is-active" : ""}
+                  onClick={() => setViewMode("grid")}
+                  aria-label="Grid view"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 4h7v7H4V4Zm9 0h7v7h-7V4ZM4 13h7v7H4v-7Zm9 0h7v7h-7v-7Z" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className={viewMode === "list" ? "is-active" : ""}
+                  onClick={() => setViewMode("list")}
+                  aria-label="List view"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 6h16v2H4V6Zm0 5h16v2H4v-2Zm0 5h16v2H4v-2Z" />
+                  </svg>
+                </button>
+              </div>
+            </header>
           </div>
-        </header>
+        </div>
 
         <section className="content-head">
           {breadcrumbs.length > 1 && (
@@ -1987,12 +2408,6 @@ function App() {
           )}
           <div className="title-row">
             <h1>{selectedFolder?.title || "Bookmarks"}</h1>
-            <span className={`status-pill is-${loadingState}`}>
-              {loadingState === "ready" && "Live"}
-              {loadingState === "demo" && "Demo"}
-              {loadingState === "loading" && "Loading"}
-              {loadingState === "error" && "Retry"}
-            </span>
           </div>
         </section>
 
@@ -2014,6 +2429,12 @@ function App() {
                       return;
                     }
                     selectSingleItem(item.id);
+                  }}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    selectSingleItem(item.id);
+                    openCardMenu(item.id, event);
                   }}
                   onDoubleClick={() => handleSelectFolder(item.id)}
                   onKeyDown={(event) => {
@@ -2046,7 +2467,7 @@ function App() {
                   <div className="folder-card-body">
                     <span className="folder-glyph">
                       <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M10 4H4c-1.1 0-2 .9-2 2v2h20V8c0-1.1-.9-2-2-2h-8l-2-2Zm10 6H4c-1.1 0-2 .9-2 2v6c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2v-6c0-1.1-.9-2-2-2Z" />
+                        <path d="M19.5 6.5H11.7l-1.4-1.4A2 2 0 0 0 8.9 4.5H5a2 2 0 0 0-2 2v10.5a2 2 0 0 0 2 2h14.5a2 2 0 0 0 2-2V8.5a2 2 0 0 0-2-2Z" />
                       </svg>
                     </span>
                     <strong>{item.title || "Untitled"}</strong>
@@ -2075,6 +2496,12 @@ function App() {
                       return;
                     }
                     selectSingleItem(item.id);
+                  }}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    selectSingleItem(item.id);
+                    openCardMenu(item.id, event);
                   }}
                   onDoubleClick={() => openBookmarkInNewTab(item.url || "")}
                   onKeyDown={(event) => {
@@ -2154,7 +2581,7 @@ function App() {
           </section>
         ) : (
           <section className="empty-state">
-            No search results found
+            {normalizedQuery ? "No search results found" : "There's nothing here right now"}
           </section>
         )}
         {dragSelection && (() => {
@@ -2177,7 +2604,33 @@ function App() {
             />
           );
         })()}
+        <span className={`status-pill is-${loadingState}`}>
+          {loadingState === "ready" && "Live"}
+          {loadingState === "demo" && "Demo"}
+          {loadingState === "loading" && "Loading"}
+          {loadingState === "error" && "Retry"}
+        </span>
       </main>
+      {createContextMenu && (
+        <div
+          className="bookmark-menu is-context-menu create-context-menu"
+          style={{
+            left: `${createContextMenu.x}px`,
+            top: `${createContextMenu.y}px`,
+          }}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        >
+          <button type="button" className="bookmark-menu-item" onClick={() => openCreateDialog("bookmark")}>
+            Add new bookmark
+          </button>
+          <button type="button" className="bookmark-menu-item" onClick={() => openCreateDialog("folder")}>
+            Add new folder
+          </button>
+        </div>
+      )}
       {editingNode && (
         <div
           className="dialog-backdrop"
@@ -2226,6 +2679,59 @@ function App() {
               </button>
               <button type="button" className="dialog-button is-primary" onClick={saveEditedNode}>
                 Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {createDialog && (
+        <div
+          className="dialog-backdrop"
+          onClick={() => {
+            setCreateDialog(null);
+          }}
+        >
+          <div
+            className="edit-dialog"
+            onClick={(event) => {
+              event.stopPropagation();
+            }}
+          >
+            <h2>{createDialog.kind === "folder" ? "Add new folder" : "Add new bookmark"}</h2>
+            <label className="dialog-field">
+              <span>{createDialog.kind === "folder" ? "Folder name" : "Title"}</span>
+              <input
+                type="text"
+                value={editDraft.title}
+                onChange={(event) =>
+                  setEditDraft((current) => ({
+                    ...current,
+                    title: event.target.value,
+                  }))
+                }
+              />
+            </label>
+            {createDialog.kind === "bookmark" && (
+              <label className="dialog-field">
+                <span>URL</span>
+                <input
+                  type="url"
+                  value={editDraft.url}
+                  onChange={(event) =>
+                    setEditDraft((current) => ({
+                      ...current,
+                      url: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+            )}
+            <div className="dialog-actions">
+              <button type="button" className="dialog-button is-secondary" onClick={() => setCreateDialog(null)}>
+                Cancel
+              </button>
+              <button type="button" className="dialog-button is-primary" onClick={createNodeInCurrentFolder}>
+                Create
               </button>
             </div>
           </div>

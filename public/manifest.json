@@ -13,6 +13,9 @@
   "background": {
     "service_worker": "background.js"
   },
+  "chrome_url_overrides": {
+    "bookmarks": "index.html"
+  },
   "action": {
     "default_title": "Open Gridmarks",
     "default_icon": {

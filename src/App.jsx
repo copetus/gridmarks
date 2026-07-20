@@ -178,6 +178,28 @@ function truncateDomain(hostname, maxLength = 20) {
   return `${hostname.slice(0, prefixLength)}…${tld}`;
 }
 
+function isValidBookmarkUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function normalizeBookmarkUrl(url) {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  if (/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(trimmed)) {
+    return trimmed;
+  }
+
+  return `http://${trimmed}`;
+}
+
 function createMultiDragPreview(sourceElement, count, rect) {
   const preview = document.createElement("div");
   const isListRowPreview = Boolean(sourceElement.closest(".content-grid.is-list"));
@@ -192,7 +214,68 @@ function createMultiDragPreview(sourceElement, count, rect) {
   preview.style.zIndex = "2147483647";
   preview.style.overflow = "visible";
 
+  const createListRowPreview = () => {
+    const row = document.createElement("div");
+    row.style.position = "absolute";
+    row.style.inset = "0 auto auto 0";
+    row.style.display = "flex";
+    row.style.alignItems = "center";
+    row.style.gap = "12px";
+    row.style.width = `${rect.width}px`;
+    row.style.height = `${rect.height}px`;
+    row.style.padding = "8px 14px";
+    row.style.border = "1px solid #e0e0e0";
+    row.style.borderRadius = "999px";
+    row.style.background = "#ffffff";
+    row.style.boxShadow = "0 0px 2px #3c404329";
+    row.style.boxSizing = "border-box";
+    row.style.pointerEvents = "none";
+    row.style.color = "#32404d";
+    row.style.fontFamily = "system-ui, Inter, sans-serif";
+
+    const sourceIcon = sourceElement.querySelector(".bookmark-favicon, .folder-glyph svg");
+    if (sourceIcon) {
+      let iconNode;
+
+      if (sourceIcon.tagName.toLowerCase() === "img") {
+        iconNode = document.createElement("img");
+        iconNode.src = sourceIcon.currentSrc || sourceIcon.src;
+        iconNode.alt = "";
+        iconNode.style.width = "18px";
+        iconNode.style.height = "18px";
+        iconNode.style.flex = "0 0 18px";
+        iconNode.style.borderRadius = "4px";
+      } else {
+        iconNode = sourceIcon.cloneNode(true);
+        iconNode.style.width = "18px";
+        iconNode.style.height = "18px";
+        iconNode.style.flex = "0 0 18px";
+        iconNode.style.fill = "#5f6368";
+      }
+
+      row.appendChild(iconNode);
+    }
+
+    const titleSource = sourceElement.querySelector("strong");
+    const title = document.createElement("span");
+    title.textContent = titleSource?.textContent?.trim() || "";
+    title.style.minWidth = "0";
+    title.style.overflow = "hidden";
+    title.style.textOverflow = "ellipsis";
+    title.style.whiteSpace = "nowrap";
+    title.style.fontSize = "13px";
+    title.style.fontWeight = "500";
+    title.style.lineHeight = "1.2";
+    row.appendChild(title);
+
+    return row;
+  };
+
   const createClone = () => {
+    if (isListRowPreview) {
+      return createListRowPreview();
+    }
+
     const clone = sourceElement.cloneNode(true);
     clone.style.position = "absolute";
     clone.style.inset = "0 auto auto 0";
@@ -202,11 +285,6 @@ function createMultiDragPreview(sourceElement, count, rect) {
     clone.style.pointerEvents = "none";
     clone.style.boxSizing = "border-box";
     clone.classList.add("is-drag-preview");
-
-    if (isListRowPreview) {
-      clone.querySelector(".bookmark-preview")?.remove();
-    }
-
     return clone;
   };
 
@@ -241,6 +319,22 @@ function createMultiDragPreview(sourceElement, count, rect) {
   preview.appendChild(badge);
 
   return preview;
+}
+
+function getFolderIconPath(variant) {
+  if (variant === "outlined") {
+    return "M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2m0 12H4V8h16z";
+  }
+
+  return "M19.5 6.5H11.7l-1.4-1.4A2 2 0 0 0 8.9 4.5H5a2 2 0 0 0-2 2v10.5a2 2 0 0 0 2 2h14.5a2 2 0 0 0 2-2V8.5a2 2 0 0 0-2-2Z";
+}
+
+function FolderIcon({ variant }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d={getFolderIconPath(variant)} />
+    </svg>
+  );
 }
 
 function updateNodeById(nodes, targetId, updater) {
@@ -424,13 +518,15 @@ function remapNodeIds(nodes, idMap) {
 }
 
 function remapClipboard(clipboard, idMap) {
-  if (!clipboard?.node) {
+  const nodes = clipboard?.nodes ?? (clipboard?.node ? [clipboard.node] : []);
+
+  if (!nodes.length) {
     return clipboard;
   }
 
   return {
     ...clipboard,
-    node: remapNodeIds([clipboard.node], idMap)[0],
+    nodes: remapNodeIds(nodes, idMap),
   };
 }
 
@@ -452,11 +548,13 @@ function remapHistoryEntry(entry, idMap) {
 }
 
 function TreeNode({
+  cutItemIds,
   depth,
   draggingNodeIds,
   dropPlacement,
   dropTargetFolderId,
   expandedFolders,
+  folderIconVariant,
   node,
   onDragEnd,
   onDragStart,
@@ -479,7 +577,7 @@ function TreeNode({
       <div className="tree-node" style={{ "--depth": depth }}>
         <button
           type="button"
-          className={`tree-row ${selectedFolderId === node.id ? "is-active" : ""} ${dropTargetFolderId === node.id ? "is-drop-target" : ""} ${draggingNodeIds.includes(node.id) ? "is-dragging" : ""} ${dropPlacement?.targetId === node.id ? `is-drop-${dropPlacement.mode}` : ""}`}
+          className={`tree-row ${selectedFolderId === node.id ? "is-active" : ""} ${dropTargetFolderId === node.id ? "is-drop-target" : ""} ${draggingNodeIds.includes(node.id) ? "is-dragging" : ""} ${cutItemIds.has(node.id) ? "is-cut" : ""} ${dropPlacement?.targetId === node.id ? `is-drop-${dropPlacement.mode}` : ""}`}
           onClick={() => onSelect(node.id)}
           onDoubleClick={(event) => {
             if (!hasFolderChildren) {
@@ -520,9 +618,7 @@ function TreeNode({
             )}
           </span>
           <span className="tree-row-icon">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M19.5 6.5H11.7l-1.4-1.4A2 2 0 0 0 8.9 4.5H5a2 2 0 0 0-2 2v10.5a2 2 0 0 0 2 2h14.5a2 2 0 0 0 2-2V8.5a2 2 0 0 0-2-2Z" />
-            </svg>
+            <FolderIcon variant={folderIconVariant} />
           </span>
           <span className="tree-row-title">{node.title || "Untitled"}</span>
         </button>
@@ -541,11 +637,13 @@ function TreeNode({
           {folderChildren.map((child) => (
             <TreeNode
               key={child.id}
+              cutItemIds={cutItemIds}
               depth={depth + 1}
               draggingNodeIds={draggingNodeIds}
               dropPlacement={dropPlacement}
               dropTargetFolderId={dropTargetFolderId}
               expandedFolders={expandedFolders}
+              folderIconVariant={folderIconVariant}
               node={child}
               onDragEnd={onDragEnd}
               onDragStart={onDragStart}
@@ -570,6 +668,7 @@ function App() {
   const [tree, setTree] = useState(FALLBACK_TREE);
   const [selectedFolderId, setSelectedFolderId] = useState("1");
   const [expandedFolders, setExpandedFolders] = useState(() => new Set(["1"]));
+  const [folderSortModes, setFolderSortModes] = useState({});
   const [query, setQuery] = useState("");
   const [viewMode, setViewMode] = useState("grid");
   const [loadingState, setLoadingState] = useState("loading");
@@ -583,11 +682,27 @@ function App() {
   const [dropTargetFolderId, setDropTargetFolderId] = useState(null);
   const [dropPlacement, setDropPlacement] = useState(null);
   const [editingNode, setEditingNode] = useState(null);
+  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [createDialog, setCreateDialog] = useState(null);
   const [editDraft, setEditDraft] = useState({ title: "", url: "" });
+  const [createDialogErrors, setCreateDialogErrors] = useState({});
+  const [folderIconVariant, setFolderIconVariant] = useState(() => {
+    if (typeof window === "undefined") {
+      return "filled";
+    }
+
+    return window.localStorage.getItem("gridmarks-folder-icon-variant") || "filled";
+  });
+  const [settingsDraft, setSettingsDraft] = useState(() => ({
+    folderIconVariant:
+      typeof window === "undefined"
+        ? "filled"
+        : window.localStorage.getItem("gridmarks-folder-icon-variant") || "filled",
+  }));
   const [selectedItemIds, setSelectedItemIds] = useState([]);
   const [selectionAnchorId, setSelectionAnchorId] = useState(null);
   const [statusMessage, setStatusMessage] = useState("");
+  const [toastState, setToastState] = useState(null);
   const [undoStack, setUndoStack] = useState([]);
   const [redoStack, setRedoStack] = useState([]);
   const [dragSelection, setDragSelection] = useState(null);
@@ -940,9 +1055,38 @@ function App() {
     return () => pane.removeEventListener("scroll", updateHeaderState);
   }, []);
 
+  useEffect(() => {
+    window.localStorage.setItem("gridmarks-folder-icon-variant", folderIconVariant);
+  }, [folderIconVariant]);
+
+  useEffect(() => {
+    if (!toastState) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setToastState(null);
+    }, 3000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [toastState]);
+
   const rootFolders = useMemo(() => getVisibleRootFolders(tree), [tree]);
   const selectedFolder = useMemo(() => findNodeById(rootFolders, selectedFolderId) ?? rootFolders[0] ?? null, [rootFolders, selectedFolderId]);
-  const childItems = selectedFolder?.children ?? [];
+  const selectedFolderSortMode = selectedFolder ? folderSortModes[selectedFolder.id] ?? "manual" : "manual";
+  const childItems = useMemo(() => {
+    const items = selectedFolder?.children ?? [];
+    if (selectedFolderSortMode !== "name") {
+      return items;
+    }
+
+    return [...items].sort((left, right) =>
+      (left.title || "").localeCompare(right.title || "", undefined, {
+        numeric: true,
+        sensitivity: "base",
+      }),
+    );
+  }, [selectedFolder, selectedFolderSortMode]);
   const normalizedQuery = query.trim().toLowerCase();
   const breadcrumbs = buildPath(rootFolders, selectedFolder?.id ?? "");
   const protectedFolderIds = useMemo(
@@ -953,6 +1097,13 @@ function App() {
           .map((node) => node.id),
       ),
     [rootFolders],
+  );
+  const cutItemIds = useMemo(
+    () =>
+      bookmarkClipboard?.mode === "cut"
+        ? new Set((bookmarkClipboard.nodes ?? (bookmarkClipboard.node ? [bookmarkClipboard.node] : [])).map((node) => node.id))
+        : new Set(),
+    [bookmarkClipboard],
   );
 
   useEffect(() => {
@@ -986,62 +1137,34 @@ function App() {
     setDragSelection(null);
   };
 
-  useEffect(() => {
-    const handleKeyDown = (event) => {
-      if (event.key === "Escape") {
-        if (editingNode) {
-          setEditingNode(null);
-          return;
-        }
-
-        if (createDialog) {
-          setCreateDialog(null);
-          return;
-        }
-
-        if (createContextMenu) {
-          setCreateContextMenu(null);
-          return;
-        }
-
-        if (selectedItemIds.length) {
-          clearSelection();
-        }
-        return;
-      }
-
-      const isUndoShortcut = (event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "z";
-      if (!isUndoShortcut) {
-        return;
-      }
-
-      const target = event.target;
-      if (
-        target instanceof HTMLElement &&
-        (target.isContentEditable ||
-          target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.tagName === "SELECT")
-      ) {
-        return;
-      }
-
-      event.preventDefault();
-
-      if (event.shiftKey) {
-        void handleRedo();
-      } else {
-        void handleUndo();
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [clearSelection, createContextMenu, createDialog, editingNode, handleRedo, handleUndo, selectedItemIds.length]);
-
   const orderIdsWithinCurrentFolder = (ids) => {
     const idSet = new Set(ids);
     return childItems.filter((node) => idSet.has(node.id)).map((node) => node.id);
+  };
+
+  const getClipboardNodes = (clipboard = bookmarkClipboard) => clipboard?.nodes ?? (clipboard?.node ? [clipboard.node] : []);
+
+  const copySelectedItems = (mode) => {
+    const selectedNodes = orderIdsWithinCurrentFolder(selectedItemIds)
+      .map((id) => findNodeById(treeRef.current, id))
+      .filter(Boolean)
+      .filter((node) => mode !== "cut" || !(isFolder(node) && protectedFolderIds.has(node.id)));
+
+    if (!selectedNodes.length) {
+      return;
+    }
+
+    setBookmarkClipboard({
+      mode,
+      nodes: JSON.parse(JSON.stringify(selectedNodes)),
+    });
+    setActiveMenuId(null);
+    setSidebarContextMenu(null);
+    setStatusMessage(
+      mode === "cut"
+        ? `${selectedNodes.length} item${selectedNodes.length > 1 ? "s" : ""} cut`
+        : `${selectedNodes.length} item${selectedNodes.length > 1 ? "s" : ""} copied`,
+    );
   };
 
   const moveFolderToFolder = async (sourceId, targetFolderId) => {
@@ -1272,6 +1395,10 @@ function App() {
       pushHistoryEntry(beforeSnapshot, afterSnapshot);
     }
 
+    setFolderSortModes((current) => ({
+      ...current,
+      [selectedFolder.id]: "manual",
+    }));
     setStatusMessage(orderedSourceIds.length > 1 ? `${orderedSourceIds.length} bookmarks reordered` : "Bookmark reordered");
     clearDragState();
   };
@@ -1505,10 +1632,35 @@ function App() {
       title: "",
       url: "",
     });
+    setCreateDialogErrors({});
     setCreateContextMenu(null);
     setActiveMenuId(null);
     setSidebarContextMenu(null);
     setCardMenuPosition(null);
+  };
+
+  const validateCreateDialog = () => {
+    if (!createDialog) {
+      return {};
+    }
+
+    const errors = {};
+
+    if (createDialog.kind === "bookmark") {
+      if (!editDraft.title.trim()) {
+        errors.title = "Enter a title";
+      }
+
+      const normalizedUrl = normalizeBookmarkUrl(editDraft.url);
+
+      if (!normalizedUrl) {
+        errors.url = "Enter a URL";
+      } else if (!isValidBookmarkUrl(normalizedUrl)) {
+        errors.url = "Enter a valid URL";
+      }
+    }
+
+    return errors;
   };
 
   const createNodeInCurrentFolder = async () => {
@@ -1516,9 +1668,15 @@ function App() {
       return;
     }
 
+    const errors = validateCreateDialog();
+    if (Object.keys(errors).length > 0) {
+      setCreateDialogErrors(errors);
+      return;
+    }
+
     const beforeSnapshot = captureSnapshot();
     const nextTitle = editDraft.title.trim() || (createDialog.kind === "folder" ? "Untitled folder" : "Untitled bookmark");
-    const nextUrl = editDraft.url.trim();
+    const nextUrl = createDialog.kind === "bookmark" ? normalizeBookmarkUrl(editDraft.url) : editDraft.url.trim();
 
     if (globalThis.chrome?.bookmarks?.create) {
       await chrome.bookmarks.create({
@@ -1540,6 +1698,7 @@ function App() {
     }
 
     setCreateDialog(null);
+    setCreateDialogErrors({});
     setStatusMessage(createDialog.kind === "folder" ? "Folder created" : "Bookmark created");
   };
 
@@ -1592,7 +1751,8 @@ function App() {
     }
 
     const beforeSnapshot = captureSnapshot();
-    const nextClipboard = bookmarkClipboard?.node.id === node.id ? null : bookmarkClipboard;
+    const clipboardNodeIds = new Set(getClipboardNodes().map((clipboardNode) => clipboardNode.id));
+    const nextClipboard = clipboardNodeIds.has(node.id) ? null : bookmarkClipboard;
 
     if (globalThis.chrome?.bookmarks?.remove) {
       if (isFolder(node) && chrome.bookmarks.removeTree) {
@@ -1616,12 +1776,15 @@ function App() {
     setActiveMenuId(null);
     setSidebarContextMenu(null);
     setStatusMessage(isFolder(node) ? "Folder deleted" : "Bookmark deleted");
+    showToastMessage(`${node.title || (isFolder(node) ? "Folder" : "Bookmark")} deleted`, {
+      type: "history",
+    });
   };
 
   const deleteSelectedItems = async () => {
     const selectedNodes = orderIdsWithinCurrentFolder(selectedItemIds)
       .map((id) => findNodeById(treeRef.current, id))
-      .filter(Boolean);
+      .filter((node) => node && !(isFolder(node) && protectedFolderIds.has(node.id)));
 
     if (!selectedNodes.length) {
       return;
@@ -1629,8 +1792,11 @@ function App() {
 
     const beforeSnapshot = captureSnapshot();
     const selectedIdSet = new Set(selectedNodes.map((node) => node.id));
+    const clipboardNodes = getClipboardNodes();
     const nextClipboard =
-      bookmarkClipboard && selectedIdSet.has(bookmarkClipboard.node.id) ? null : bookmarkClipboard;
+      clipboardNodes.length && clipboardNodes.some((clipboardNode) => selectedIdSet.has(clipboardNode.id))
+        ? null
+        : bookmarkClipboard;
 
     if (globalThis.chrome?.bookmarks?.remove) {
       for (const node of selectedNodes) {
@@ -1662,6 +1828,14 @@ function App() {
     setActiveMenuId(null);
     setSidebarContextMenu(null);
     setStatusMessage(`${selectedNodes.length} items deleted`);
+    showToastMessage(
+      selectedNodes.length === 1
+        ? `${selectedNodes[0].title || (isFolder(selectedNodes[0]) ? "Folder" : "Bookmark")} deleted`
+        : `${selectedNodes.length} items deleted`,
+      {
+        type: "history",
+      },
+    );
   };
 
   const copyNode = (node, mode) => {
@@ -1671,7 +1845,7 @@ function App() {
 
     setBookmarkClipboard({
       mode,
-      node: JSON.parse(JSON.stringify(node)),
+      nodes: [JSON.parse(JSON.stringify(node))],
     });
     setActiveMenuId(null);
     setSidebarContextMenu(null);
@@ -1679,7 +1853,9 @@ function App() {
   };
 
   const pasteNode = async () => {
-    if (!bookmarkClipboard || !selectedFolder?.id) {
+    const clipboardNodes = getClipboardNodes();
+
+    if (!clipboardNodes.length || !selectedFolder?.id) {
       return;
     }
 
@@ -1687,26 +1863,38 @@ function App() {
 
     if (bookmarkClipboard.mode === "cut") {
       if (globalThis.chrome?.bookmarks?.move) {
-        await chrome.bookmarks.move(bookmarkClipboard.node.id, {
-          parentId: selectedFolder.id,
-        });
+        for (const [index, node] of clipboardNodes.entries()) {
+          await chrome.bookmarks.move(node.id, {
+            parentId: selectedFolder.id,
+            index,
+          });
+        }
         const nextTree = await fetchBookmarksTree();
         const afterSnapshot = commitTreeChange(nextTree, {
           bookmarkClipboard: null,
         });
         pushHistoryEntry(beforeSnapshot, afterSnapshot);
       } else {
-        const bookmarkNode = findNodeById(tree, bookmarkClipboard.node.id);
-        if (bookmarkNode) {
-          const removed = removeNodeById(treeRef.current, bookmarkNode.id);
-          const nextTree = insertNodeIntoFolder(removed, selectedFolder.id, bookmarkNode);
+        let nextTree = treeRef.current;
+
+        for (const clipboardNode of clipboardNodes) {
+          const bookmarkNode = findNodeById(nextTree, clipboardNode.id);
+          if (!bookmarkNode) {
+            continue;
+          }
+
+          const removed = removeNodeById(nextTree, bookmarkNode.id);
+          nextTree = insertNodeIntoFolder(removed, selectedFolder.id, bookmarkNode);
+        }
+
+        if (nextTree !== treeRef.current) {
           const afterSnapshot = commitTreeChange(nextTree, {
             bookmarkClipboard: null,
           });
           pushHistoryEntry(beforeSnapshot, afterSnapshot);
         }
       }
-      setStatusMessage(`${isFolder(bookmarkClipboard.node) ? "Folder" : "Bookmark"} moved`);
+      setStatusMessage(`${clipboardNodes.length} item${clipboardNodes.length > 1 ? "s" : ""} moved`);
     } else if (globalThis.chrome?.bookmarks?.create) {
       const createRecursively = async (node, parentId) => {
         const created = await chrome.bookmarks.create({
@@ -1722,18 +1910,23 @@ function App() {
         }
       };
 
-      await createRecursively(bookmarkClipboard.node, selectedFolder.id);
+      for (const node of clipboardNodes) {
+        await createRecursively(node, selectedFolder.id);
+      }
       const nextTree = await fetchBookmarksTree();
       const afterSnapshot = commitTreeChange(nextTree);
       pushHistoryEntry(beforeSnapshot, afterSnapshot);
-      setStatusMessage(`${isFolder(bookmarkClipboard.node) ? "Folder" : "Bookmark"} pasted`);
+      setStatusMessage(`${clipboardNodes.length} item${clipboardNodes.length > 1 ? "s" : ""} pasted`);
     } else {
-      const nextTree = insertNodeIntoFolder(treeRef.current, selectedFolder.id, {
-        ...cloneBookmarkNode(bookmarkClipboard.node),
-      });
+      let nextTree = treeRef.current;
+      for (const node of clipboardNodes) {
+        nextTree = insertNodeIntoFolder(nextTree, selectedFolder.id, {
+          ...cloneBookmarkNode(node),
+        });
+      }
       const afterSnapshot = commitTreeChange(nextTree);
       pushHistoryEntry(beforeSnapshot, afterSnapshot);
-      setStatusMessage(`${isFolder(bookmarkClipboard.node) ? "Folder" : "Bookmark"} pasted`);
+      setStatusMessage(`${clipboardNodes.length} item${clipboardNodes.length > 1 ? "s" : ""} pasted`);
     }
 
     if (bookmarkClipboard.mode === "cut") {
@@ -1743,6 +1936,126 @@ function App() {
     setActiveMenuId(null);
     setSidebarContextMenu(null);
   };
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      const target = event.target;
+      const isTypingTarget =
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT");
+
+      if (event.key === "Escape") {
+        if (editingNode) {
+          setEditingNode(null);
+          return;
+        }
+
+        if (createDialog) {
+          setCreateDialog(null);
+          return;
+        }
+
+        if (settingsDialogOpen) {
+          setSettingsDialogOpen(false);
+          return;
+        }
+
+        if (createContextMenu) {
+          setCreateContextMenu(null);
+          return;
+        }
+
+        if (activeMenuId || sidebarContextMenu) {
+          setActiveMenuId(null);
+          setSidebarContextMenu(null);
+          setCardMenuPosition(null);
+          return;
+        }
+
+        if (bookmarkClipboard?.mode === "cut") {
+          setBookmarkClipboard(null);
+          return;
+        }
+
+        const activeElement = document.activeElement;
+        if (
+          activeElement instanceof HTMLElement &&
+          activeElement !== document.body &&
+          !isTypingTarget
+        ) {
+          activeElement.blur();
+          return;
+        }
+
+        if (selectedItemIds.length) {
+          clearSelection();
+        }
+        return;
+      }
+
+      if ((event.key === "Delete" || event.key === "Backspace") && selectedItemIds.length) {
+        if (isTypingTarget) {
+          return;
+        }
+
+        event.preventDefault();
+        void deleteSelectedItems();
+        return;
+      }
+
+      if (event.altKey && !event.metaKey && !event.ctrlKey && !isTypingTarget && event.key.toLowerCase() === "l") {
+        event.preventDefault();
+        setExpandedFolders(new Set());
+        return;
+      }
+
+      const isModifierShortcut = (event.metaKey || event.ctrlKey) && !event.altKey;
+      if (isModifierShortcut && !isTypingTarget) {
+        const key = event.key.toLowerCase();
+
+        if (key === "c" && selectedItemIds.length) {
+          event.preventDefault();
+          copySelectedItems("copy");
+          return;
+        }
+
+        if (key === "x" && selectedItemIds.length) {
+          event.preventDefault();
+          copySelectedItems("cut");
+          return;
+        }
+
+        if (key === "v" && getClipboardNodes().length && selectedFolder?.id) {
+          event.preventDefault();
+          void pasteNode();
+          return;
+        }
+      }
+
+      const isUndoShortcut = isModifierShortcut && event.key.toLowerCase() === "z";
+      if (!isUndoShortcut) {
+        return;
+      }
+
+      if (isTypingTarget) {
+        return;
+      }
+
+      event.preventDefault();
+
+      if (event.shiftKey) {
+        void handleRedo();
+      } else {
+        void handleUndo();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeMenuId, bookmarkClipboard, clearSelection, copySelectedItems, createContextMenu, createDialog, deleteSelectedItems, editingNode, handleRedo, handleUndo, pasteNode, selectedFolder?.id, selectedItemIds.length, settingsDialogOpen, sidebarContextMenu]);
 
   const openBookmarkInNewTab = async (url) => {
     if (globalThis.chrome?.tabs?.create) {
@@ -1931,9 +2244,68 @@ function App() {
     setSidebarContextMenu(null);
     setCardMenuPosition(null);
     setCreateContextMenu({
+      includeSortOptions: false,
       x: event.clientX,
       y: event.clientY,
     });
+  };
+
+  const openCreateMenuAtPosition = (x, y) => {
+    setActiveMenuId(null);
+    setSidebarContextMenu(null);
+    setCardMenuPosition(null);
+    setCreateContextMenu({ includeSortOptions: true, x, y });
+  };
+
+  const showToastMessage = (message, undo = null) => {
+    setToastState({ message, undo });
+  };
+
+  const handleToastUndo = async () => {
+    if (!toastState?.undo) {
+      return;
+    }
+
+    if (toastState.undo.type === "history") {
+      await handleUndo();
+    } else if (toastState.undo.type === "settings") {
+      setFolderIconVariant(toastState.undo.folderIconVariant);
+    }
+
+    setToastState(null);
+  };
+
+  const openSettingsDialog = () => {
+    setCreateContextMenu(null);
+    setSettingsDraft({ folderIconVariant });
+    setSettingsDialogOpen(true);
+  };
+
+  const closeSettingsDialog = () => {
+    setSettingsDialogOpen(false);
+    setSettingsDraft({ folderIconVariant });
+  };
+
+  const saveSettings = () => {
+    const previousVariant = folderIconVariant;
+    setFolderIconVariant(settingsDraft.folderIconVariant);
+    setSettingsDialogOpen(false);
+    showToastMessage("Settings updated", {
+      type: "settings",
+      folderIconVariant: previousVariant,
+    });
+  };
+
+  const setSelectedFolderSortMode = (mode) => {
+    if (!selectedFolder?.id) {
+      return;
+    }
+
+    setFolderSortModes((current) => ({
+      ...current,
+      [selectedFolder.id]: mode,
+    }));
+    setCreateContextMenu(null);
   };
 
   const visibleItems = useMemo(
@@ -2152,6 +2524,12 @@ function App() {
     const bookmarkCount = collectBookmarkUrls(item).length;
     const { className = "bookmark-menu", style } = options;
     const isProtectedFolder = protectedFolderIds.has(item.id);
+    const renderMenuLabel = (label, shortcut) => (
+      <>
+        <span>{label}</span>
+        {shortcut ? <span className="bookmark-menu-shortcut">{shortcut}</span> : null}
+      </>
+    );
 
     return (
       <div
@@ -2163,17 +2541,17 @@ function App() {
         }}
       >
         <button type="button" className="bookmark-menu-item" onClick={() => openEditDialog(item)} disabled={isProtectedFolder}>
-          Rename
+          {renderMenuLabel("Rename")}
         </button>
         <button type="button" className="bookmark-menu-item" onClick={() => deleteNode(item)} disabled={isProtectedFolder}>
-          Delete
+          {renderMenuLabel("Delete", "⌫")}
         </button>
         <div className="bookmark-menu-divider" />
         <button type="button" className="bookmark-menu-item" onClick={() => copyNode(item, "cut")} disabled={isProtectedFolder}>
-          Cut
+          {renderMenuLabel("Cut", "⌘X")}
         </button>
         <button type="button" className="bookmark-menu-item" onClick={() => copyNode(item, "copy")}>
-          Copy
+          {renderMenuLabel("Copy", "⌘C")}
         </button>
         <button
           type="button"
@@ -2181,7 +2559,7 @@ function App() {
           onClick={pasteNode}
           disabled={!bookmarkClipboard}
         >
-          Paste
+          {renderMenuLabel("Paste", "⌘V")}
         </button>
         <div className="bookmark-menu-divider" />
         <button
@@ -2189,31 +2567,31 @@ function App() {
           className="bookmark-menu-item"
           onClick={() => openFolderInNewWindow(item, true)}
         >
-          Open all ({bookmarkCount}) in Incognito window
+          {renderMenuLabel(`Open all (${bookmarkCount}) in Incognito window`)}
         </button>
         <button
           type="button"
           className="bookmark-menu-item"
           onClick={() => openFolderInNewTabGroup(item)}
         >
-          Open all ({bookmarkCount}) in new tab group
+          {renderMenuLabel(`Open all (${bookmarkCount}) in new tab group`)}
         </button>
         <button
           type="button"
           className="bookmark-menu-item"
           onClick={() => openUrlsInNewTabs(collectBookmarkUrls(item))}
         >
-          Open all ({bookmarkCount})
+          {renderMenuLabel(`Open all (${bookmarkCount})`)}
         </button>
         <button
           type="button"
           className="bookmark-menu-item"
           onClick={() => openFolderInNewWindow(item)}
         >
-          Open all ({bookmarkCount}) in new window
+          {renderMenuLabel(`Open all (${bookmarkCount}) in new window`)}
         </button>
         <button type="button" className="bookmark-menu-item" disabled>
-          Open in split view
+          {renderMenuLabel("Open in split view")}
         </button>
       </div>
     );
@@ -2221,6 +2599,12 @@ function App() {
 
   const renderBookmarkMenu = (item, options = {}) => {
     const { className = "bookmark-menu", style } = options;
+    const renderMenuLabel = (label, shortcut) => (
+      <>
+        <span>{label}</span>
+        {shortcut ? <span className="bookmark-menu-shortcut">{shortcut}</span> : null}
+      </>
+    );
 
     return (
       <div
@@ -2232,17 +2616,17 @@ function App() {
         }}
       >
         <button type="button" className="bookmark-menu-item" onClick={() => openEditDialog(item)}>
-          Edit
+          {renderMenuLabel("Edit")}
         </button>
         <button type="button" className="bookmark-menu-item" onClick={() => deleteNode(item)}>
-          Delete
+          {renderMenuLabel("Delete", "⌫")}
         </button>
         <div className="bookmark-menu-divider" />
         <button type="button" className="bookmark-menu-item" onClick={() => copyNode(item, "cut")}>
-          Cut
+          {renderMenuLabel("Cut", "⌘X")}
         </button>
         <button type="button" className="bookmark-menu-item" onClick={() => copyNode(item, "copy")}>
-          Copy
+          {renderMenuLabel("Copy", "⌘C")}
         </button>
         <button
           type="button"
@@ -2250,7 +2634,7 @@ function App() {
           onClick={pasteNode}
           disabled={!bookmarkClipboard}
         >
-          Paste
+          {renderMenuLabel("Paste", "⌘V")}
         </button>
         <div className="bookmark-menu-divider" />
         <button
@@ -2258,31 +2642,31 @@ function App() {
           className="bookmark-menu-item"
           onClick={() => openBookmarkInNewWindow(item.url || "", true)}
         >
-          Open in Incognito window
+          {renderMenuLabel("Open in Incognito window")}
         </button>
         <button
           type="button"
           className="bookmark-menu-item"
           onClick={() => openBookmarkInNewTabGroup(item)}
         >
-          Open in new tab group
+          {renderMenuLabel("Open in new tab group")}
         </button>
         <button
           type="button"
           className="bookmark-menu-item"
           onClick={() => openBookmarkInNewTab(item.url || "")}
         >
-          Open in new tab
+          {renderMenuLabel("Open in new tab")}
         </button>
         <button
           type="button"
           className="bookmark-menu-item"
           onClick={() => openBookmarkInNewWindow(item.url || "")}
         >
-          Open in new window
+          {renderMenuLabel("Open in new window")}
         </button>
         <button type="button" className="bookmark-menu-item" disabled>
-          Open in split view
+          {renderMenuLabel("Open in split view")}
         </button>
       </div>
     );
@@ -2295,11 +2679,13 @@ function App() {
           {rootFolders.map((folder) => (
             <TreeNode
               key={folder.id}
+              cutItemIds={cutItemIds}
               depth={0}
               draggingNodeIds={draggingNodeIds}
               dropPlacement={dropPlacement}
               dropTargetFolderId={dropTargetFolderId}
               expandedFolders={expandedFolders}
+              folderIconVariant={folderIconVariant}
               node={folder}
               onDragEnd={handleDragEnd}
               onDragStart={handleDragStart}
@@ -2338,59 +2724,76 @@ function App() {
         <div className={`content-header-shell ${isHeaderElevated ? "is-elevated" : ""}`}>
           <div className="content-header-main">
             <header className="toolbar">
-              <label className="search-field">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M10 4a6 6 0 1 1 0 12 6 6 0 0 1 0-12Zm0-2a8 8 0 1 0 4.9 14.3l4.4 4.4 1.4-1.4-4.4-4.4A8 8 0 0 0 10 2Z" />
-                </svg>
-                <input
-                  ref={searchInputRef}
-                  type="search"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search bookmarks"
-                />
-                {query && (
+              <div className="toolbar-center">
+                <label className="search-field">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M10 4a6 6 0 1 1 0 12 6 6 0 0 1 0-12Zm0-2a8 8 0 1 0 4.9 14.3l4.4 4.4 1.4-1.4-4.4-4.4A8 8 0 0 0 10 2Z" />
+                  </svg>
+                  <input
+                    ref={searchInputRef}
+                    type="search"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder="Search bookmarks"
+                  />
+                  {query && (
+                    <button
+                      type="button"
+                      className="search-clear"
+                      aria-label="Clear search"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        setQuery("");
+                        searchInputRef.current?.focus();
+                      }}
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm3.59 13.17L14.17 15.59 12 13.41l-2.17 2.18-1.42-1.42L10.59 12 8.41 9.83l1.42-1.42L12 10.59l2.17-2.18 1.42 1.42L13.41 12l2.18 2.17Z" />
+                      </svg>
+                    </button>
+                  )}
+                </label>
+
+                <div className="view-toggle" aria-label="View options">
                   <button
                     type="button"
-                    className="search-clear"
-                    aria-label="Clear search"
-                    onClick={(event) => {
-                      event.preventDefault();
-                      setQuery("");
-                      searchInputRef.current?.focus();
-                    }}
+                    className={viewMode === "grid" ? "is-active" : ""}
+                    onClick={() => setViewMode("grid")}
+                    aria-label="Grid view"
                   >
                     <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm3.59 13.17L14.17 15.59 12 13.41l-2.17 2.18-1.42-1.42L10.59 12 8.41 9.83l1.42-1.42L12 10.59l2.17-2.18 1.42 1.42L13.41 12l2.18 2.17Z" />
+                      <path d="M4 4h7v7H4V4Zm9 0h7v7h-7V4ZM4 13h7v7H4v-7Zm9 0h7v7h-7v-7Z" />
                     </svg>
                   </button>
-                )}
-              </label>
-
-              <div className="view-toggle" aria-label="View options">
-                <button
-                  type="button"
-                  className={viewMode === "grid" ? "is-active" : ""}
-                  onClick={() => setViewMode("grid")}
-                  aria-label="Grid view"
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M4 4h7v7H4V4Zm9 0h7v7h-7V4ZM4 13h7v7H4v-7Zm9 0h7v7h-7v-7Z" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  className={viewMode === "list" ? "is-active" : ""}
-                  onClick={() => setViewMode("list")}
-                  aria-label="List view"
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M4 6h16v2H4V6Zm0 5h16v2H4v-2Zm0 5h16v2H4v-2Z" />
-                  </svg>
-                </button>
+                  <button
+                    type="button"
+                    className={viewMode === "list" ? "is-active" : ""}
+                    onClick={() => setViewMode("list")}
+                    aria-label="List view"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M4 6h16v2H4V6Zm0 5h16v2H4v-2Zm0 5h16v2H4v-2Z" />
+                    </svg>
+                  </button>
+                </div>
               </div>
             </header>
           </div>
+          <button
+            type="button"
+            className="header-menu-button"
+            aria-label="More actions"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              const rect = event.currentTarget.getBoundingClientRect();
+              openCreateMenuAtPosition(rect.right - 270, rect.bottom + 8);
+            }}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm0 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm0 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" />
+            </svg>
+          </button>
         </div>
 
         <section className="content-head">
@@ -2421,7 +2824,7 @@ function App() {
                 <div
                   key={item.id}
                   ref={(element) => setContentItemRef(item.id, element)}
-                  className={`content-card folder-card ${dropTargetFolderId === item.id ? "is-drop-target" : ""} ${draggingNodeIds.includes(item.id) ? "is-dragging" : ""} ${selectedItemIds.includes(item.id) ? "is-selected" : ""} ${dropPlacement?.targetId === item.id ? `is-drop-${dropPlacement.mode}` : ""}`}
+                  className={`content-card folder-card ${dropTargetFolderId === item.id ? "is-drop-target" : ""} ${draggingNodeIds.includes(item.id) ? "is-dragging" : ""} ${cutItemIds.has(item.id) ? "is-cut" : ""} ${selectedItemIds.includes(item.id) ? "is-selected" : ""} ${dropPlacement?.targetId === item.id ? `is-drop-${dropPlacement.mode}` : ""}`}
                   role="button"
                   tabIndex={0}
                   onClick={(event) => {
@@ -2466,9 +2869,7 @@ function App() {
                   </button>
                   <div className="folder-card-body">
                     <span className="folder-glyph">
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M19.5 6.5H11.7l-1.4-1.4A2 2 0 0 0 8.9 4.5H5a2 2 0 0 0-2 2v10.5a2 2 0 0 0 2 2h14.5a2 2 0 0 0 2-2V8.5a2 2 0 0 0-2-2Z" />
-                      </svg>
+                      <FolderIcon variant={folderIconVariant} />
                     </span>
                     <strong>{item.title || "Untitled"}</strong>
                   </div>
@@ -2487,7 +2888,7 @@ function App() {
                 <div
                   key={item.id}
                   ref={(element) => setContentItemRef(item.id, element)}
-                  className={`content-card bookmark-card ${draggingNodeIds.includes(item.id) ? "is-dragging" : ""} ${selectedItemIds.includes(item.id) ? "is-selected" : ""} ${dropPlacement?.targetId === item.id ? `is-drop-${dropPlacement.mode}` : ""}`}
+                  className={`content-card bookmark-card ${draggingNodeIds.includes(item.id) ? "is-dragging" : ""} ${cutItemIds.has(item.id) ? "is-cut" : ""} ${selectedItemIds.includes(item.id) ? "is-selected" : ""} ${dropPlacement?.targetId === item.id ? `is-drop-${dropPlacement.mode}` : ""}`}
                   role="link"
                   tabIndex={0}
                   draggable
@@ -2610,6 +3011,14 @@ function App() {
           {loadingState === "loading" && "Loading"}
           {loadingState === "error" && "Retry"}
         </span>
+        {toastState && (
+          <div className="toast-message">
+            <span className="toast-message-text">{toastState.message}</span>
+            <button type="button" className="toast-message-action" onClick={() => void handleToastUndo()}>
+              Undo
+            </button>
+          </div>
+        )}
       </main>
       {createContextMenu && (
         <div
@@ -2629,6 +3038,84 @@ function App() {
           <button type="button" className="bookmark-menu-item" onClick={() => openCreateDialog("folder")}>
             Add new folder
           </button>
+          {createContextMenu.includeSortOptions && (
+            <>
+              <div className="bookmark-menu-divider" />
+              <button
+                type="button"
+                className="bookmark-menu-item"
+                onClick={() => setSelectedFolderSortMode("name")}
+              >
+                <span>Sort by name</span>
+                {selectedFolderSortMode === "name" ? <span className="bookmark-menu-shortcut">Current</span> : null}
+              </button>
+              <button
+                type="button"
+                className="bookmark-menu-item"
+                onClick={() => setSelectedFolderSortMode("manual")}
+              >
+                <span>Sort manually</span>
+                {selectedFolderSortMode === "manual" ? <span className="bookmark-menu-shortcut">Current</span> : null}
+              </button>
+              <div className="bookmark-menu-divider" />
+              <button
+                type="button"
+                className="bookmark-menu-item"
+                onClick={openSettingsDialog}
+              >
+                <span>Settings</span>
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      {settingsDialogOpen && (
+        <div
+          className="dialog-backdrop"
+          onClick={closeSettingsDialog}
+        >
+          <div
+            className="edit-dialog settings-dialog"
+            onClick={(event) => {
+              event.stopPropagation();
+            }}
+          >
+            <h2>Settings</h2>
+            <div className="settings-section">
+              <h3>Directory icon</h3>
+              <p>Select the icon to represent folders.</p>
+              <div className="settings-options">
+                <button
+                  type="button"
+                  className={`settings-tile ${settingsDraft.folderIconVariant === "outlined" ? "is-active" : ""}`}
+                  onClick={() => setSettingsDraft((current) => ({ ...current, folderIconVariant: "outlined" }))}
+                >
+                  <span className="settings-tile-icon">
+                    <FolderIcon variant="outlined" />
+                  </span>
+                  <span className="settings-tile-label">Outlined</span>
+                </button>
+                <button
+                  type="button"
+                  className={`settings-tile ${settingsDraft.folderIconVariant === "filled" ? "is-active" : ""}`}
+                  onClick={() => setSettingsDraft((current) => ({ ...current, folderIconVariant: "filled" }))}
+                >
+                  <span className="settings-tile-icon">
+                    <FolderIcon variant="filled" />
+                  </span>
+                  <span className="settings-tile-label">Filled</span>
+                </button>
+              </div>
+            </div>
+            <div className="dialog-actions">
+              <button type="button" className="dialog-button is-secondary" onClick={closeSettingsDialog}>
+                Cancel
+              </button>
+              <button type="button" className="dialog-button is-primary" onClick={saveSettings}>
+                Confirm
+              </button>
+            </div>
+          </div>
         </div>
       )}
       {editingNode && (
@@ -2696,6 +3183,12 @@ function App() {
             onClick={(event) => {
               event.stopPropagation();
             }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void createNodeInCurrentFolder();
+              }
+            }}
           >
             <h2>{createDialog.kind === "folder" ? "Add new folder" : "Add new bookmark"}</h2>
             <label className="dialog-field">
@@ -2704,26 +3197,39 @@ function App() {
                 type="text"
                 value={editDraft.title}
                 onChange={(event) =>
-                  setEditDraft((current) => ({
-                    ...current,
-                    title: event.target.value,
-                  }))
+                  {
+                    setEditDraft((current) => ({
+                      ...current,
+                      title: event.target.value,
+                    }));
+                    setCreateDialogErrors((current) => ({ ...current, title: "" }));
+                  }
                 }
               />
+              {createDialog.kind === "bookmark" && createDialogErrors.title && (
+                <span className="dialog-field-error">{createDialogErrors.title}</span>
+              )}
             </label>
             {createDialog.kind === "bookmark" && (
               <label className="dialog-field">
                 <span>URL</span>
                 <input
                   type="url"
+                  placeholder="https://"
                   value={editDraft.url}
                   onChange={(event) =>
-                    setEditDraft((current) => ({
-                      ...current,
-                      url: event.target.value,
-                    }))
+                    {
+                      setEditDraft((current) => ({
+                        ...current,
+                        url: event.target.value,
+                      }));
+                      setCreateDialogErrors((current) => ({ ...current, url: "" }));
+                    }
                   }
                 />
+                {createDialogErrors.url && (
+                  <span className="dialog-field-error">{createDialogErrors.url}</span>
+                )}
               </label>
             )}
             <div className="dialog-actions">

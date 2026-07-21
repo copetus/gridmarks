@@ -2650,10 +2650,21 @@ function App() {
     setActiveMenuId(null);
     setSidebarContextMenu(null);
     setCardMenuPosition(null);
+    const menuWidth = 240;
+    const estimatedMenuHeight = 220;
+    const viewportPadding = 16;
+    const x = Math.max(
+      viewportPadding,
+      Math.min(event.clientX, window.innerWidth - menuWidth - viewportPadding),
+    );
+    const y = Math.max(
+      viewportPadding,
+      Math.min(event.clientY, window.innerHeight - estimatedMenuHeight - viewportPadding),
+    );
     setCreateContextMenu({
       includeSortOptions: false,
-      x: event.clientX,
-      y: event.clientY,
+      x,
+      y,
     });
   };
 
@@ -2661,7 +2672,18 @@ function App() {
     setActiveMenuId(null);
     setSidebarContextMenu(null);
     setCardMenuPosition(null);
-    setCreateContextMenu({ includeSortOptions: true, x, y });
+    const menuWidth = 240;
+    const estimatedMenuHeight = 320;
+    const viewportPadding = 16;
+    const clampedX = Math.max(
+      viewportPadding,
+      Math.min(x, window.innerWidth - menuWidth - viewportPadding),
+    );
+    const clampedY = Math.max(
+      viewportPadding,
+      Math.min(y, window.innerHeight - estimatedMenuHeight - viewportPadding),
+    );
+    setCreateContextMenu({ includeSortOptions: true, x: clampedX, y: clampedY });
   };
 
   const showToastMessage = (message, undo = null) => {

@@ -154,6 +154,61 @@ function getPreviewUrl(url) {
   return `https://image.thum.io/get/width/1200/crop/720/noanimate/${url}`;
 }
 
+const PREVIEW_CACHE_DB_NAME = "gridmarks-preview-cache";
+const PREVIEW_CACHE_STORE_NAME = "preview-images";
+
+function openPreviewCacheDatabase() {
+  if (typeof indexedDB === "undefined") {
+    return Promise.resolve(null);
+  }
+
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(PREVIEW_CACHE_DB_NAME, 1);
+
+    request.onupgradeneeded = () => {
+      const database = request.result;
+      if (!database.objectStoreNames.contains(PREVIEW_CACHE_STORE_NAME)) {
+        database.createObjectStore(PREVIEW_CACHE_STORE_NAME);
+      }
+    };
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function readPreviewCacheBlob(cacheKey) {
+  const database = await openPreviewCacheDatabase();
+  if (!database) {
+    return null;
+  }
+
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction(PREVIEW_CACHE_STORE_NAME, "readonly");
+    const store = transaction.objectStore(PREVIEW_CACHE_STORE_NAME);
+    const request = store.get(cacheKey);
+
+    request.onsuccess = () => resolve(request.result instanceof Blob ? request.result : null);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function writePreviewCacheBlob(cacheKey, blob) {
+  const database = await openPreviewCacheDatabase();
+  if (!database) {
+    return;
+  }
+
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction(PREVIEW_CACHE_STORE_NAME, "readwrite");
+    const store = transaction.objectStore(PREVIEW_CACHE_STORE_NAME);
+    const request = store.put(blob, cacheKey);
+
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+}
+
 function getFaviconUrl(url) {
   return `https://www.google.com/s2/favicons?sz=64&domain_url=${encodeURIComponent(url)}`;
 }
@@ -200,15 +255,93 @@ function normalizeBookmarkUrl(url) {
   return `http://${trimmed}`;
 }
 
+function getDeletionToastLabel(node) {
+  const fallbackLabel = isFolder(node) ? "Folder" : "Bookmark";
+  return `"${node?.title || fallbackLabel}" deleted`;
+}
+
+function isLikelyBlockedPreviewImage(image) {
+  const sampleSize = 24;
+  const canvas = document.createElement("canvas");
+  canvas.width = sampleSize;
+  canvas.height = sampleSize;
+
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    return false;
+  }
+
+  try {
+    context.drawImage(image, 0, 0, sampleSize, sampleSize);
+    const { data } = context.getImageData(0, 0, sampleSize, sampleSize);
+    let brightPixels = 0;
+    let mutedPixels = 0;
+    let darkPixels = 0;
+    let edgeBrightPixels = 0;
+    let edgePixels = 0;
+
+    for (let y = 0; y < sampleSize; y += 1) {
+      for (let x = 0; x < sampleSize; x += 1) {
+        const index = (y * sampleSize + x) * 4;
+        const red = data[index];
+        const green = data[index + 1];
+        const blue = data[index + 2];
+        const alpha = data[index + 3];
+
+        if (alpha < 16) {
+          continue;
+        }
+
+        const maxChannel = Math.max(red, green, blue);
+        const minChannel = Math.min(red, green, blue);
+        const luminance = (red + green + blue) / 3;
+        const saturation = maxChannel - minChannel;
+        const isEdgePixel = x === 0 || y === 0 || x === sampleSize - 1 || y === sampleSize - 1;
+
+        if (luminance >= 242) {
+          brightPixels += 1;
+          if (isEdgePixel) {
+            edgeBrightPixels += 1;
+          }
+        }
+
+        if (saturation <= 18) {
+          mutedPixels += 1;
+        }
+
+        if (luminance <= 130) {
+          darkPixels += 1;
+        }
+
+        if (isEdgePixel) {
+          edgePixels += 1;
+        }
+      }
+    }
+
+    const totalPixels = sampleSize * sampleSize;
+    const brightRatio = brightPixels / totalPixels;
+    const mutedRatio = mutedPixels / totalPixels;
+    const darkRatio = darkPixels / totalPixels;
+    const edgeBrightRatio = edgePixels ? edgeBrightPixels / edgePixels : 0;
+
+    return brightRatio >= 0.82 && mutedRatio >= 0.88 && darkRatio >= 0.01 && darkRatio <= 0.18 && edgeBrightRatio >= 0.94;
+  } catch {
+    return false;
+  }
+}
+
 function createMultiDragPreview(sourceElement, count, rect) {
   const preview = document.createElement("div");
   const isListRowPreview = Boolean(sourceElement.closest(".content-grid.is-list"));
+  const listPreviewWidth = 240;
+  const previewWidth = isListRowPreview ? listPreviewWidth : rect.width;
   const stackOffsetX = count > 1 ? 8 : 0;
   const stackOffsetY = count > 1 ? (isListRowPreview ? 2 : 8) : 0;
   preview.style.position = "fixed";
   preview.style.top = "-1000px";
   preview.style.left = "-1000px";
-  preview.style.width = `${rect.width + stackOffsetX}px`;
+  preview.style.width = `${previewWidth + stackOffsetX}px`;
   preview.style.height = `${rect.height + (isListRowPreview ? 0 : stackOffsetY)}px`;
   preview.style.pointerEvents = "none";
   preview.style.zIndex = "2147483647";
@@ -221,7 +354,7 @@ function createMultiDragPreview(sourceElement, count, rect) {
     row.style.display = "flex";
     row.style.alignItems = "center";
     row.style.gap = "12px";
-    row.style.width = `${rect.width}px`;
+    row.style.width = `${previewWidth}px`;
     row.style.height = `${rect.height}px`;
     row.style.padding = "8px 14px";
     row.style.border = "1px solid #e0e0e0";
@@ -708,6 +841,12 @@ function App() {
   const [dragSelection, setDragSelection] = useState(null);
   const [dragItemMetrics, setDragItemMetrics] = useState(null);
   const [isHeaderElevated, setIsHeaderElevated] = useState(false);
+  const [cachedPreviewUrls, setCachedPreviewUrls] = useState({});
+  const [isCompactSidebar, setIsCompactSidebar] = useState(() =>
+    typeof window === "undefined" ? false : window.matchMedia("(max-width: 700px)").matches,
+  );
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isCompactSearchOpen, setIsCompactSearchOpen] = useState(false);
 
   const treeRef = useRef(tree);
   const selectedFolderIdRef = useRef(selectedFolderId);
@@ -719,6 +858,9 @@ function App() {
   const contentPaneRef = useRef(null);
   const contentGridRef = useRef(null);
   const contentItemRefs = useRef(new Map());
+  const previewObjectUrlsRef = useRef(new Map());
+  const previewCacheLookupRef = useRef(new Set());
+  const previewCacheWriteRef = useRef(new Set());
 
   treeRef.current = tree;
   selectedFolderIdRef.current = selectedFolderId;
@@ -999,6 +1141,32 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    const mediaQuery = window.matchMedia("(max-width: 700px)");
+    const updateSidebarMode = (event) => {
+      const matches = typeof event === "boolean" ? event : event.matches;
+      setIsCompactSidebar(matches);
+      if (!matches) {
+        setIsSidebarOpen(false);
+        setIsCompactSearchOpen(false);
+      }
+    };
+
+    updateSidebarMode(mediaQuery.matches);
+
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", updateSidebarMode);
+      return () => mediaQuery.removeEventListener("change", updateSidebarMode);
+    }
+
+    mediaQuery.addListener(updateSidebarMode);
+    return () => mediaQuery.removeListener(updateSidebarMode);
+  }, []);
+
+  useEffect(() => {
     if (!activeMenuId && !sidebarContextMenu && !createContextMenu) {
       return undefined;
     }
@@ -1039,6 +1207,18 @@ function App() {
     window.addEventListener("pointerdown", handlePointerDown);
     return () => window.removeEventListener("pointerdown", handlePointerDown);
   }, []);
+
+  useEffect(() => {
+    if (!isCompactSidebar || !isCompactSearchOpen) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      searchInputRef.current?.focus();
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [isCompactSearchOpen, isCompactSidebar]);
 
   useEffect(() => {
     const pane = contentPaneRef.current;
@@ -1088,6 +1268,14 @@ function App() {
     );
   }, [selectedFolder, selectedFolderSortMode]);
   const normalizedQuery = query.trim().toLowerCase();
+  const visiblePreviewCacheKeys = useMemo(
+    () =>
+      childItems
+        .filter((node) => node.url)
+        .map((node) => getPreviewUrl(node.url))
+        .filter((cacheKey, index, values) => values.indexOf(cacheKey) === index),
+    [childItems],
+  );
   const breadcrumbs = buildPath(rootFolders, selectedFolder?.id ?? "");
   const protectedFolderIds = useMemo(
     () =>
@@ -1111,6 +1299,45 @@ function App() {
     setSelectionAnchorId(null);
   }, [selectedFolderId]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadCachedPreviews = async () => {
+      for (const cacheKey of visiblePreviewCacheKeys) {
+        if (cachedPreviewUrls[cacheKey] || previewCacheLookupRef.current.has(cacheKey)) {
+          continue;
+        }
+
+        previewCacheLookupRef.current.add(cacheKey);
+
+        try {
+          const blob = await readPreviewCacheBlob(cacheKey);
+          if (!cancelled && blob) {
+            setCachedPreviewBlob(cacheKey, blob);
+          }
+        } catch {
+          // Ignore preview cache read failures and fall back to the live thumbnail service.
+        }
+      }
+    };
+
+    void loadCachedPreviews();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cachedPreviewUrls, visiblePreviewCacheKeys]);
+
+  useEffect(
+    () => () => {
+      for (const objectUrl of previewObjectUrlsRef.current.values()) {
+        URL.revokeObjectURL(objectUrl);
+      }
+      previewObjectUrlsRef.current.clear();
+    },
+    [],
+  );
+
   const markPreviewFailed = (bookmarkId) => {
     setFailedPreviewUrls((current) => {
       if (current[bookmarkId]) {
@@ -1122,6 +1349,73 @@ function App() {
         [bookmarkId]: true,
       };
     });
+  };
+
+  const setCachedPreviewBlob = (cacheKey, blob) => {
+    const existingObjectUrl = previewObjectUrlsRef.current.get(cacheKey);
+    if (existingObjectUrl) {
+      URL.revokeObjectURL(existingObjectUrl);
+    }
+
+    const nextObjectUrl = URL.createObjectURL(blob);
+    previewObjectUrlsRef.current.set(cacheKey, nextObjectUrl);
+    setCachedPreviewUrls((current) => {
+      if (current[cacheKey] === nextObjectUrl) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [cacheKey]: nextObjectUrl,
+      };
+    });
+  };
+
+  const cachePreviewImage = async (cacheKey) => {
+    if (cachedPreviewUrls[cacheKey] || previewCacheWriteRef.current.has(cacheKey)) {
+      return;
+    }
+
+    previewCacheWriteRef.current.add(cacheKey);
+
+    try {
+      const response = await fetch(cacheKey, {
+        cache: "force-cache",
+        mode: "cors",
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.startsWith("image/")) {
+        return;
+      }
+
+      const blob = await response.blob();
+      if (!blob.size) {
+        return;
+      }
+
+      await writePreviewCacheBlob(cacheKey, blob);
+      setCachedPreviewBlob(cacheKey, blob);
+    } catch {
+      // Ignore preview cache write failures and continue showing the live thumbnail.
+    } finally {
+      previewCacheWriteRef.current.delete(cacheKey);
+    }
+  };
+
+  const handlePreviewImageLoad = (bookmarkId, image, cacheKey, isCachedPreview) => {
+    if (!isCachedPreview && isLikelyBlockedPreviewImage(image)) {
+      markPreviewFailed(bookmarkId);
+      return;
+    }
+
+    if (!isCachedPreview) {
+      void cachePreviewImage(cacheKey);
+    }
   };
 
   const clearDragState = () => {
@@ -1776,7 +2070,7 @@ function App() {
     setActiveMenuId(null);
     setSidebarContextMenu(null);
     setStatusMessage(isFolder(node) ? "Folder deleted" : "Bookmark deleted");
-    showToastMessage(`${node.title || (isFolder(node) ? "Folder" : "Bookmark")} deleted`, {
+    showToastMessage(getDeletionToastLabel(node), {
       type: "history",
     });
   };
@@ -1830,7 +2124,7 @@ function App() {
     setStatusMessage(`${selectedNodes.length} items deleted`);
     showToastMessage(
       selectedNodes.length === 1
-        ? `${selectedNodes[0].title || (isFolder(selectedNodes[0]) ? "Folder" : "Bookmark")} deleted`
+        ? getDeletionToastLabel(selectedNodes[0])
         : `${selectedNodes.length} items deleted`,
       {
         type: "history",
@@ -1850,6 +2144,61 @@ function App() {
     setActiveMenuId(null);
     setSidebarContextMenu(null);
     setStatusMessage(mode === "cut" ? `${isFolder(node) ? "Folder" : "Bookmark"} cut` : `${isFolder(node) ? "Folder" : "Bookmark"} copied`);
+  };
+
+  const duplicateSelectedItems = async () => {
+    if (!selectedFolder?.id) {
+      return;
+    }
+
+    const selectedNodes = orderIdsWithinCurrentFolder(selectedItemIds)
+      .map((id) => findNodeById(treeRef.current, id))
+      .filter(Boolean);
+
+    if (!selectedNodes.length) {
+      return;
+    }
+
+    const beforeSnapshot = captureSnapshot();
+
+    if (globalThis.chrome?.bookmarks?.create) {
+      const createRecursively = async (node, parentId) => {
+        const created = await chrome.bookmarks.create({
+          parentId,
+          title: node.title,
+          ...(isFolder(node) ? {} : { url: node.url }),
+        });
+
+        if (isFolder(node)) {
+          for (const child of node.children ?? []) {
+            await createRecursively(child, created.id);
+          }
+        }
+      };
+
+      for (const node of selectedNodes) {
+        await createRecursively(node, selectedFolder.id);
+      }
+
+      const nextTree = await fetchBookmarksTree();
+      const afterSnapshot = commitTreeChange(nextTree);
+      pushHistoryEntry(beforeSnapshot, afterSnapshot);
+    } else {
+      let nextTree = treeRef.current;
+
+      for (const node of selectedNodes) {
+        nextTree = insertNodeIntoFolder(nextTree, selectedFolder.id, cloneBookmarkNode(node));
+      }
+
+      const afterSnapshot = commitTreeChange(nextTree);
+      pushHistoryEntry(beforeSnapshot, afterSnapshot);
+    }
+
+    setActiveMenuId(null);
+    setSidebarContextMenu(null);
+    setCreateContextMenu(null);
+    setCardMenuPosition(null);
+    setStatusMessage(`${selectedNodes.length} item${selectedNodes.length > 1 ? "s" : ""} duplicated`);
   };
 
   const pasteNode = async () => {
@@ -1948,6 +2297,16 @@ function App() {
           target.tagName === "SELECT");
 
       if (event.key === "Escape") {
+        if (isCompactSidebar && isSidebarOpen) {
+          setIsSidebarOpen(false);
+          return;
+        }
+
+        if (isCompactSidebar && isCompactSearchOpen && !query) {
+          setIsCompactSearchOpen(false);
+          return;
+        }
+
         if (editingNode) {
           setEditingNode(null);
           return;
@@ -2028,6 +2387,12 @@ function App() {
           return;
         }
 
+        if (key === "d" && selectedItemIds.length) {
+          event.preventDefault();
+          void duplicateSelectedItems();
+          return;
+        }
+
         if (key === "v" && getClipboardNodes().length && selectedFolder?.id) {
           event.preventDefault();
           void pasteNode();
@@ -2055,7 +2420,7 @@ function App() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeMenuId, bookmarkClipboard, clearSelection, copySelectedItems, createContextMenu, createDialog, deleteSelectedItems, editingNode, handleRedo, handleUndo, pasteNode, selectedFolder?.id, selectedItemIds.length, settingsDialogOpen, sidebarContextMenu]);
+  }, [activeMenuId, bookmarkClipboard, clearSelection, copySelectedItems, createContextMenu, createDialog, deleteSelectedItems, duplicateSelectedItems, editingNode, handleRedo, handleUndo, isCompactSearchOpen, isCompactSidebar, isSidebarOpen, pasteNode, query, selectedFolder?.id, selectedItemIds.length, settingsDialogOpen, sidebarContextMenu]);
 
   const openBookmarkInNewTab = async (url) => {
     if (globalThis.chrome?.tabs?.create) {
@@ -2204,6 +2569,9 @@ function App() {
       }
       return next;
     });
+    if (isCompactSidebar) {
+      setIsSidebarOpen(false);
+    }
   };
 
   const handleToggleFolder = (folderId) => {
@@ -2673,8 +3041,22 @@ function App() {
   };
 
   return (
-    <div className="app-shell" onContextMenu={openCreateContextMenu}>
-      <aside className="sidebar">
+    <div
+      className={`app-shell ${isCompactSidebar ? "is-sidebar-collapsed" : ""} ${isSidebarOpen ? "is-sidebar-open" : ""}`}
+      onContextMenu={openCreateContextMenu}
+    >
+      {isCompactSidebar && isSidebarOpen && (
+        <button
+          type="button"
+          className="sidebar-backdrop"
+          aria-label="Close sidebar"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+      <aside
+        id="bookmark-sidebar"
+        className={`sidebar ${isCompactSidebar ? "is-overlay" : ""} ${isSidebarOpen ? "is-open" : ""}`}
+      >
         <nav className="folder-tree" aria-label="Bookmark folders">
           {rootFolders.map((folder) => (
             <TreeNode
@@ -2722,10 +3104,36 @@ function App() {
           </div>
         )}
         <div className={`content-header-shell ${isHeaderElevated ? "is-elevated" : ""}`}>
+          {isCompactSidebar && (
+            <button
+              type="button"
+              className="sidebar-toggle-button"
+              aria-label={isSidebarOpen ? "Close sidebar" : "Open sidebar"}
+              aria-expanded={isSidebarOpen}
+              aria-controls="bookmark-sidebar"
+              onClick={() => setIsSidebarOpen((current) => !current)}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M22 11V3h-7v3H9V3H2v8h7V8h2v10h4v3h7v-8h-7v3h-2V8h2v3z" />
+              </svg>
+            </button>
+          )}
           <div className="content-header-main">
             <header className="toolbar">
               <div className="toolbar-center">
-                <label className="search-field">
+                {isCompactSidebar && (
+                  <button
+                    type="button"
+                    className={`search-toggle-button ${isCompactSearchOpen || query ? "is-hidden" : ""}`}
+                    aria-label="Open search"
+                    onClick={() => setIsCompactSearchOpen(true)}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M10 4a6 6 0 1 1 0 12 6 6 0 0 1 0-12Zm0-2a8 8 0 1 0 4.9 14.3l4.4 4.4 1.4-1.4-4.4-4.4A8 8 0 0 0 10 2Z" />
+                    </svg>
+                  </button>
+                )}
+                <label className={`search-field ${isCompactSidebar ? "is-compact" : ""} ${isCompactSearchOpen || query ? "is-open" : ""}`}>
                   <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M10 4a6 6 0 1 1 0 12 6 6 0 0 1 0-12Zm0-2a8 8 0 1 0 4.9 14.3l4.4 4.4 1.4-1.4-4.4-4.4A8 8 0 0 0 10 2Z" />
                   </svg>
@@ -2734,6 +3142,11 @@ function App() {
                     type="search"
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
+                    onBlur={() => {
+                      if (isCompactSidebar && !query) {
+                        setIsCompactSearchOpen(false);
+                      }
+                    }}
                     placeholder="Search bookmarks"
                   />
                   {query && (
@@ -2922,15 +3335,20 @@ function App() {
                     const previewFailed = failedPreviewUrls[item.id];
                     const fallbackDomain = truncateDomain(hostname);
                     const themeColor = getDomainTheme(hostname);
+                    const previewCacheKey = getPreviewUrl(item.url || "");
+                    const previewSource = cachedPreviewUrls[previewCacheKey] || previewCacheKey;
+                    const isCachedPreview = Boolean(cachedPreviewUrls[previewCacheKey]);
 
                     return (
                       <div className="bookmark-preview" style={{ "--preview-accent": themeColor }}>
                         {!previewFailed && (
                           <img
                             className="bookmark-preview-image"
-                            src={getPreviewUrl(item.url || "")}
+                            src={previewSource}
                             alt=""
                             loading="lazy"
+                            crossOrigin="anonymous"
+                            onLoad={(event) => handlePreviewImageLoad(item.id, event.currentTarget, previewCacheKey, isCachedPreview)}
                             onError={() => markPreviewFailed(item.id)}
                           />
                         )}

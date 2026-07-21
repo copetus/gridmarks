@@ -255,6 +255,15 @@ function normalizeBookmarkUrl(url) {
   return `http://${trimmed}`;
 }
 
+function getInitialSelectedFolderId() {
+  if (typeof window === "undefined") {
+    return "1";
+  }
+
+  const folderId = new URLSearchParams(window.location.search).get("folder");
+  return folderId || "1";
+}
+
 function getDeletionToastLabel(node) {
   const fallbackLabel = isFolder(node) ? "Folder" : "Bookmark";
   return `"${node?.title || fallbackLabel}" deleted`;
@@ -799,7 +808,7 @@ function TreeNode({
 
 function App() {
   const [tree, setTree] = useState(FALLBACK_TREE);
-  const [selectedFolderId, setSelectedFolderId] = useState("1");
+  const [selectedFolderId, setSelectedFolderId] = useState(getInitialSelectedFolderId);
   const [expandedFolders, setExpandedFolders] = useState(() => new Set(["1"]));
   const [folderSortModes, setFolderSortModes] = useState({});
   const [query, setQuery] = useState("");

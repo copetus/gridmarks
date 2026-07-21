@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { cacheCapturedPreview } from "./previewCache";
+import { cacheCapturedPreview, cacheCapturedPreviewBlob } from "./previewCache";
 
 const LAST_FOLDER_STORAGE_KEY = "gridmarks-last-save-folder-id";
 
@@ -206,6 +206,46 @@ function FolderOption({
   );
 }
 
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function getPreviewGeometry(containerRect, imageSize, scale) {
+  if (!containerRect || !imageSize.width || !imageSize.height) {
+    return null;
+  }
+
+  const containerWidth = containerRect.width;
+  const containerHeight = containerRect.height;
+  const imageRatio = imageSize.width / imageSize.height;
+  const containerRatio = containerWidth / containerHeight;
+
+  let baseWidth = containerWidth;
+  let baseHeight = containerHeight;
+
+  if (imageRatio > containerRatio) {
+    baseHeight = containerHeight;
+    baseWidth = baseHeight * imageRatio;
+  } else {
+    baseWidth = containerWidth;
+    baseHeight = baseWidth / imageRatio;
+  }
+
+  const renderedWidth = baseWidth * scale;
+  const renderedHeight = baseHeight * scale;
+
+  return {
+    containerWidth,
+    containerHeight,
+    baseWidth,
+    baseHeight,
+    renderedWidth,
+    renderedHeight,
+    maxOffsetX: Math.max(0, (renderedWidth - containerWidth) / 2),
+    maxOffsetY: Math.max(0, (renderedHeight - containerHeight) / 2),
+  };
+}
+
 export default function SavePopup() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -217,12 +257,21 @@ export default function SavePopup() {
   const [isFolderMenuOpen, setIsFolderMenuOpen] = useState(false);
   const [folderMenuPosition, setFolderMenuPosition] = useState(null);
   const [previewUrl, setPreviewUrl] = useState("");
+  const [previewScale, setPreviewScale] = useState(1);
+  const [previewOffset, setPreviewOffset] = useState({ x: 0, y: 0 });
+  const [previewImageSize, setPreviewImageSize] = useState({ width: 0, height: 0 });
+  const [previewFrameSize, setPreviewFrameSize] = useState({ width: 0, height: 0 });
+  const [isPreviewDragging, setIsPreviewDragging] = useState(false);
   const [tabInfo, setTabInfo] = useState(null);
   const [status, setStatus] = useState("");
   const [deleted, setDeleted] = useState(false);
   const folderMenuRef = useRef(null);
   const folderTriggerRef = useRef(null);
   const popupCardRef = useRef(null);
+  const previewFrameRef = useRef(null);
+  const previewImageRef = useRef(null);
+  const dragStateRef = useRef(null);
+  const previewSaveTimeoutRef = useRef(null);
 
   useEffect(() => {
     if (!isFolderMenuOpen) {
@@ -240,6 +289,52 @@ export default function SavePopup() {
       document.removeEventListener("pointerdown", handlePointerDown);
     };
   }, [isFolderMenuOpen]);
+
+  useEffect(
+    () => () => {
+      if (previewSaveTimeoutRef.current) {
+        clearTimeout(previewSaveTimeoutRef.current);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!previewFrameRef.current || typeof ResizeObserver === "undefined") {
+      return undefined;
+    }
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) {
+        return;
+      }
+
+      setPreviewFrameSize({
+        width: entry.contentRect.width,
+        height: entry.contentRect.height,
+      });
+    });
+
+    observer.observe(previewFrameRef.current);
+    return () => observer.disconnect();
+  }, [previewUrl]);
+
+  useEffect(() => {
+    const frame = previewFrameRef.current;
+    if (!frame) {
+      return undefined;
+    }
+
+    const handleWheelEvent = (event) => {
+      handlePreviewWheel(event);
+    };
+
+    frame.addEventListener("wheel", handleWheelEvent, { passive: false });
+    return () => {
+      frame.removeEventListener("wheel", handleWheelEvent);
+    };
+  }, [previewImageSize, previewFrameSize, previewScale, previewOffset, tabInfo]);
 
   useEffect(() => {
     if (!isFolderMenuOpen) {
@@ -364,6 +459,154 @@ export default function SavePopup() {
     [folderId, folders],
   );
 
+  const previewGeometry = useMemo(
+    () =>
+      getPreviewGeometry(
+        previewFrameSize.width && previewFrameSize.height
+          ? { width: previewFrameSize.width, height: previewFrameSize.height }
+          : null,
+        previewImageSize,
+        previewScale,
+      ),
+    [previewFrameSize, previewImageSize, previewScale],
+  );
+
+  const persistAdjustedPreview = async (nextScale = previewScale, nextOffset = previewOffset) => {
+    if (!tabInfo?.url || !previewImageRef.current || !previewImageSize.width || !previewFrameRef.current) {
+      return;
+    }
+
+    const geometry = getPreviewGeometry(previewFrameSize.width && previewFrameSize.height ? previewFrameSize : null, previewImageSize, nextScale);
+    if (!geometry) {
+      return;
+    }
+
+    const outputWidth = 1200;
+    const outputHeight = Math.round(outputWidth * (geometry.containerHeight / geometry.containerWidth));
+    const scaleFactor = outputWidth / geometry.containerWidth;
+    const canvas = document.createElement("canvas");
+    canvas.width = outputWidth;
+    canvas.height = outputHeight;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      return;
+    }
+
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, outputWidth, outputHeight);
+
+    const drawWidth = geometry.renderedWidth * scaleFactor;
+    const drawHeight = geometry.renderedHeight * scaleFactor;
+    const drawX = ((geometry.containerWidth - geometry.renderedWidth) / 2 + nextOffset.x) * scaleFactor;
+    const drawY = ((geometry.containerHeight - geometry.renderedHeight) / 2 + nextOffset.y) * scaleFactor;
+    context.drawImage(previewImageRef.current, drawX, drawY, drawWidth, drawHeight);
+
+    const blob = await new Promise((resolve) => {
+      canvas.toBlob(resolve, "image/jpeg", 0.9);
+    });
+
+    if (blob) {
+      await cacheCapturedPreviewBlob(tabInfo.url, blob);
+    }
+  };
+
+  const scheduleAdjustedPreviewPersist = (nextScale, nextOffset) => {
+    if (previewSaveTimeoutRef.current) {
+      clearTimeout(previewSaveTimeoutRef.current);
+    }
+
+    previewSaveTimeoutRef.current = window.setTimeout(() => {
+      void persistAdjustedPreview(nextScale, nextOffset);
+    }, 160);
+  };
+
+  const clampPreviewOffset = (nextOffset, scale = previewScale) => {
+    const geometry = getPreviewGeometry(previewFrameSize.width && previewFrameSize.height ? previewFrameSize : null, previewImageSize, scale);
+    if (!geometry) {
+      return nextOffset;
+    }
+
+    return {
+      x: clamp(nextOffset.x, -geometry.maxOffsetX, geometry.maxOffsetX),
+      y: clamp(nextOffset.y, -geometry.maxOffsetY, geometry.maxOffsetY),
+    };
+  };
+
+  const handlePreviewWheel = (event) => {
+    if (!previewImageSize.width || !previewFrameRef.current) {
+      return;
+    }
+
+    event.preventDefault();
+    const frameRect = previewFrameRef.current.getBoundingClientRect();
+    const pointerX = event.clientX - frameRect.left;
+    const pointerY = event.clientY - frameRect.top;
+    const relativeX = pointerX - frameRect.width / 2;
+    const relativeY = pointerY - frameRect.height / 2;
+    const scaleDelta = event.deltaY < 0 ? 0.12 : -0.12;
+    const nextScale = clamp(Number((previewScale + scaleDelta).toFixed(3)), 1, 3);
+
+    if (nextScale === previewScale) {
+      return;
+    }
+
+    const pointX = (relativeX - previewOffset.x) / previewScale;
+    const pointY = (relativeY - previewOffset.y) / previewScale;
+    const nextOffset = clampPreviewOffset(
+      {
+        x: relativeX - pointX * nextScale,
+        y: relativeY - pointY * nextScale,
+      },
+      nextScale,
+    );
+
+    setPreviewScale(nextScale);
+    setPreviewOffset(nextOffset);
+    scheduleAdjustedPreviewPersist(nextScale, nextOffset);
+  };
+
+  const handlePreviewPointerDown = (event) => {
+    if (!previewImageSize.width) {
+      return;
+    }
+
+    setIsPreviewDragging(true);
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originOffset: previewOffset,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handlePreviewPointerMove = (event) => {
+    const dragState = dragStateRef.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const nextOffset = clampPreviewOffset({
+      x: dragState.originOffset.x + (event.clientX - dragState.startX),
+      y: dragState.originOffset.y + (event.clientY - dragState.startY),
+    });
+    setPreviewOffset(nextOffset);
+  };
+
+  const handlePreviewPointerUp = (event) => {
+    const dragState = dragStateRef.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    dragStateRef.current = null;
+    setIsPreviewDragging(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    scheduleAdjustedPreviewPersist(previewScale, previewOffset);
+  };
+
   const moveBookmarkToFolder = async (nextFolderId) => {
     if (!bookmarkId || !nextFolderId || nextFolderId === folderId) {
       return;
@@ -456,7 +699,42 @@ export default function SavePopup() {
       <section className="save-popup-card" ref={popupCardRef}>
         <div className="save-popup-preview-frame">
           {previewUrl ? (
-            <img className="save-popup-preview-image" src={previewUrl} alt="" />
+            <div
+              ref={previewFrameRef}
+              className={`save-popup-preview-interactive ${isPreviewDragging ? "is-dragging" : ""}`}
+              onPointerDown={handlePreviewPointerDown}
+              onPointerMove={handlePreviewPointerMove}
+              onPointerUp={handlePreviewPointerUp}
+              onPointerCancel={handlePreviewPointerUp}
+            >
+              <img
+                ref={previewImageRef}
+                className="save-popup-preview-image"
+                src={previewUrl}
+                alt=""
+                draggable="false"
+                onLoad={(event) => {
+                  setPreviewImageSize({
+                    width: event.currentTarget.naturalWidth,
+                    height: event.currentTarget.naturalHeight,
+                  });
+                  const frameRect = previewFrameRef.current?.getBoundingClientRect();
+                  if (frameRect) {
+                    setPreviewFrameSize({
+                      width: frameRect.width,
+                      height: frameRect.height,
+                    });
+                  }
+                }}
+                style={{
+                  width: previewGeometry ? `${previewGeometry.baseWidth}px` : "100%",
+                  height: previewGeometry ? `${previewGeometry.baseHeight}px` : "100%",
+                  left: "50%",
+                  top: "50%",
+                  transform: `translate(calc(-50% + ${previewOffset.x}px), calc(-50% + ${previewOffset.y}px)) scale(${previewScale})`,
+                }}
+              />
+            </div>
           ) : (
             <div className="save-popup-preview-fallback">
               <span>{getHostname(tabInfo?.url || "")}</span>

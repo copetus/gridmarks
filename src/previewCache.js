@@ -72,3 +72,12 @@ export async function cacheCapturedPreview(url, dataUrl) {
   await writePreviewCacheBlob(getPreviewUrl(url), blob);
   return true;
 }
+
+export async function cacheCapturedPreviewBlob(url, blob) {
+  if (!url || !(blob instanceof Blob) || !blob.size || !blob.type.startsWith("image/")) {
+    return false;
+  }
+
+  await writePreviewCacheBlob(getPreviewUrl(url), blob);
+  return true;
+}

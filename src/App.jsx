@@ -1296,7 +1296,7 @@ function App() {
     setSelectedFolderId(parentId);
     setSelectedItemIds([initialTargetBookmarkId]);
     setSelectionAnchorId(initialTargetBookmarkId);
-    setExpandedFolders((current) => new Set([...current, ...getFolderTrailIds(rootFolders, parentId)]));
+    setExpandedFolders((current) => new Set([...current, ...getPathIds(rootFolders, parentId)]));
   }, [initialTargetBookmarkId, rootFolders]);
 
   useEffect(() => {

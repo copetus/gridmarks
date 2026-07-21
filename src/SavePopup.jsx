@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { cacheCapturedPreview } from "./previewCache";
 
 const LAST_FOLDER_STORAGE_KEY = "gridmarks-last-save-folder-id";
 
@@ -41,6 +42,45 @@ function isBookmarkableUrl(url) {
   } catch {
     return false;
   }
+}
+
+function normalizeComparableUrl(url) {
+  try {
+    const parsed = new URL(url);
+    parsed.hash = "";
+
+    if ((parsed.protocol === "https:" && parsed.port === "443") || (parsed.protocol === "http:" && parsed.port === "80")) {
+      parsed.port = "";
+    }
+
+    if (parsed.pathname !== "/" && parsed.pathname.endsWith("/")) {
+      parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+    }
+
+    return parsed.toString();
+  } catch {
+    return url.trim();
+  }
+}
+
+function findBookmarkByUrl(nodes, targetUrl) {
+  const normalizedTargetUrl = normalizeComparableUrl(targetUrl);
+
+  for (const node of nodes) {
+    if (Array.isArray(node.children)) {
+      const nested = findBookmarkByUrl(node.children, targetUrl);
+      if (nested) {
+        return nested;
+      }
+      continue;
+    }
+
+    if (node.url && normalizeComparableUrl(node.url) === normalizedTargetUrl) {
+      return node;
+    }
+  }
+
+  return null;
 }
 
 function extractFolderTree(nodes) {
@@ -175,11 +215,14 @@ export default function SavePopup() {
   const [folderTree, setFolderTree] = useState([]);
   const [expandedFolderIds, setExpandedFolderIds] = useState(() => new Set());
   const [isFolderMenuOpen, setIsFolderMenuOpen] = useState(false);
+  const [folderMenuPosition, setFolderMenuPosition] = useState(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [tabInfo, setTabInfo] = useState(null);
   const [status, setStatus] = useState("");
   const [deleted, setDeleted] = useState(false);
   const folderMenuRef = useRef(null);
+  const folderTriggerRef = useRef(null);
+  const popupCardRef = useRef(null);
 
   useEffect(() => {
     if (!isFolderMenuOpen) {
@@ -195,6 +238,41 @@ export default function SavePopup() {
     document.addEventListener("pointerdown", handlePointerDown);
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [isFolderMenuOpen]);
+
+  useEffect(() => {
+    if (!isFolderMenuOpen) {
+      return undefined;
+    }
+
+    const updateFolderMenuPosition = () => {
+      const triggerRect = folderTriggerRef.current?.getBoundingClientRect();
+      const cardRect = popupCardRef.current?.getBoundingClientRect();
+      if (!triggerRect) {
+        return;
+      }
+      if (!cardRect) {
+        return;
+      }
+
+      const menuTop = 8;
+      const controlTop = triggerRect.top - cardRect.top;
+      const menuHeight = Math.max(0, controlTop - menuTop);
+
+      setFolderMenuPosition({
+        top: menuTop,
+        left: triggerRect.left - cardRect.left,
+        width: triggerRect.width,
+        height: menuHeight,
+      });
+    };
+
+    updateFolderMenuPosition();
+    window.addEventListener("resize", updateFolderMenuPosition);
+
+    return () => {
+      window.removeEventListener("resize", updateFolderMenuPosition);
     };
   }, [isFolderMenuOpen]);
 
@@ -218,10 +296,7 @@ export default function SavePopup() {
         ]);
         const nextFolderTree = extractFolderTree(tree);
         const nextFolders = flattenFolders(nextFolderTree);
-        const existingBookmarks = await chrome.bookmarks.search({
-          url: tab.url,
-        });
-        const existingBookmark = existingBookmarks[0] ?? null;
+        const existingBookmark = findBookmarkByUrl(tree, tab.url);
         const initialFolderId = getInitialFolderIdForBookmark(nextFolders, existingBookmark, storedFolderId);
 
         if (!initialFolderId) {
@@ -242,6 +317,14 @@ export default function SavePopup() {
             quality: 80,
           })
           .catch(() => "");
+
+        if (capturedPreviewUrl) {
+          try {
+            await cacheCapturedPreview(tab.url, capturedPreviewUrl);
+          } catch {
+            // Ignore preview cache failures and keep the in-popup preview only.
+          }
+        }
 
         if (cancelled) {
           return;
@@ -339,6 +422,7 @@ export default function SavePopup() {
       await chrome.runtime.sendMessage({
         type: "open-gridmarks",
         folderId,
+        bookmarkId,
       });
       window.close();
     } catch (nextError) {
@@ -357,7 +441,7 @@ export default function SavePopup() {
   if (error) {
     return (
       <main className="save-popup-shell">
-        <section className="save-popup-card">
+      <section className="save-popup-card" ref={popupCardRef}>
           <p className="save-popup-error">{error}</p>
           <button type="button" className="save-popup-primary-button" onClick={handleOpenGridmarks}>
             Open Gridmarks
@@ -369,7 +453,7 @@ export default function SavePopup() {
 
   return (
     <main className="save-popup-shell">
-      <section className="save-popup-card">
+      <section className="save-popup-card" ref={popupCardRef}>
         <div className="save-popup-preview-frame">
           {previewUrl ? (
             <img className="save-popup-preview-image" src={previewUrl} alt="" />
@@ -391,6 +475,7 @@ export default function SavePopup() {
             <button
               type="button"
               className="save-popup-select"
+              ref={folderTriggerRef}
               onClick={() => setIsFolderMenuOpen((current) => !current)}
               disabled={deleted}
               aria-expanded={isFolderMenuOpen}
@@ -402,8 +487,16 @@ export default function SavePopup() {
                 <span className="save-popup-select-label">{currentFolder?.title || "Select folder"}</span>
               </span>
             </button>
-            {isFolderMenuOpen ? (
-              <div className="save-popup-folder-menu">
+            {isFolderMenuOpen && folderMenuPosition ? (
+              <div
+                className="save-popup-folder-menu"
+                style={{
+                  top: `${folderMenuPosition.top}px`,
+                  left: `${folderMenuPosition.left}px`,
+                  width: `${folderMenuPosition.width}px`,
+                  height: `${folderMenuPosition.height}px`,
+                }}
+              >
                 {folderTree.map((node) => (
                   <FolderOption
                     key={node.id}

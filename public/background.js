@@ -5,9 +5,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   chrome.tabs
     .create({
-      url: message.folderId
-        ? `${chrome.runtime.getURL("index.html")}?folder=${encodeURIComponent(message.folderId)}`
-        : chrome.runtime.getURL("index.html"),
+      url: (() => {
+        const url = new URL(chrome.runtime.getURL("index.html"));
+        if (message.folderId) {
+          url.searchParams.set("folder", message.folderId);
+        }
+        if (message.bookmarkId) {
+          url.searchParams.set("bookmark", message.bookmarkId);
+        }
+        return url.toString();
+      })(),
     })
     .then(() => sendResponse({ ok: true }))
     .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));

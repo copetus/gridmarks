@@ -1,7 +1,11 @@
 html {
   border-radius: 16px;
-  overflow: hidden;
+  overflow: visible;
   background: transparent;
+  --gray-100: #f1f3f4;
+  --gray-300: #dadce0;
+  --gray-500: #5f6368;
+  --gray-700: #3c4043;
 }
 
 body {
@@ -14,7 +18,7 @@ body {
   background: transparent;
   color: #202124;
   border-radius: 16px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 #root {
@@ -22,10 +26,10 @@ body {
 }
 
 .save-popup-shell {
-  padding: 10px;
+  padding: 8px;
   box-sizing: border-box;
   border-radius: 16px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .save-popup-shell.is-loading {
@@ -43,6 +47,8 @@ body {
   border-radius: 12px;
   background: #ffffff;
   box-shadow: none;
+  overflow: visible;
+  position: relative;
 }
 
 .save-popup-preview-frame {
@@ -98,7 +104,7 @@ body {
 .save-popup-field {
   display: grid;
   gap: 8px;
-  position: relative;
+  position: static;
 }
 
 .save-popup-field-label {
@@ -112,18 +118,20 @@ body {
 .save-popup-select,
 .save-popup-icon-button,
 .save-popup-primary-button {
-  border: 1px solid #dadce0;
+  border: 1px solid var(--gray-300);
   border-radius: 8px;
   background: #ffffff;
   color: #202124;
   font: inherit;
   font-size: 14px;
+  transition: background-color 120ms ease, border-color 120ms ease;
 }
 
 .save-popup-select {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  width: 100%;
   appearance: none;
   -webkit-appearance: none;
   min-height: 44px;
@@ -156,6 +164,13 @@ body {
   font-weight: 500;
 }
 
+.save-popup-select:hover:not(:disabled),
+.save-popup-icon-button:hover:not(:disabled),
+.save-popup-primary-button:hover:not(:disabled) {
+  background-color: var(--gray-100);
+  border-color: var(--gray-700);
+}
+
 .save-popup-icon-button {
   display: inline-flex;
   align-items: center;
@@ -169,7 +184,7 @@ body {
 }
 
 .save-popup-folder-picker {
-  position: relative;
+  position: static;
 }
 
 .save-popup-select-value {
@@ -187,14 +202,11 @@ body {
 
 .save-popup-folder-menu {
   position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  right: 0;
   z-index: 10;
-  max-height: 220px;
+  box-sizing: border-box;
   overflow: auto;
   padding: 6px;
-  border: 1px solid #dadce0;
+  border: 1px solid var(--gray-300);
   border-radius: 8px;
   background: #ffffff;
   box-shadow: 0 10px 24px rgba(22, 34, 54, 0.12);
@@ -217,7 +229,7 @@ body {
 }
 
 .save-popup-folder-option:hover {
-  background: #f1f3f4;
+  background: var(--gray-100);
 }
 
 .save-popup-folder-option.is-selected {

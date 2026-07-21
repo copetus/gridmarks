@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { getPreviewUrl, readPreviewCacheBlob, writePreviewCacheBlob } from "./previewCache";
 
 const FALLBACK_TREE = [
   {
@@ -150,65 +151,6 @@ function getHostname(url) {
   }
 }
 
-function getPreviewUrl(url) {
-  return `https://image.thum.io/get/width/1200/crop/720/noanimate/${url}`;
-}
-
-const PREVIEW_CACHE_DB_NAME = "gridmarks-preview-cache";
-const PREVIEW_CACHE_STORE_NAME = "preview-images";
-
-function openPreviewCacheDatabase() {
-  if (typeof indexedDB === "undefined") {
-    return Promise.resolve(null);
-  }
-
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(PREVIEW_CACHE_DB_NAME, 1);
-
-    request.onupgradeneeded = () => {
-      const database = request.result;
-      if (!database.objectStoreNames.contains(PREVIEW_CACHE_STORE_NAME)) {
-        database.createObjectStore(PREVIEW_CACHE_STORE_NAME);
-      }
-    };
-
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-async function readPreviewCacheBlob(cacheKey) {
-  const database = await openPreviewCacheDatabase();
-  if (!database) {
-    return null;
-  }
-
-  return new Promise((resolve, reject) => {
-    const transaction = database.transaction(PREVIEW_CACHE_STORE_NAME, "readonly");
-    const store = transaction.objectStore(PREVIEW_CACHE_STORE_NAME);
-    const request = store.get(cacheKey);
-
-    request.onsuccess = () => resolve(request.result instanceof Blob ? request.result : null);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-async function writePreviewCacheBlob(cacheKey, blob) {
-  const database = await openPreviewCacheDatabase();
-  if (!database) {
-    return;
-  }
-
-  return new Promise((resolve, reject) => {
-    const transaction = database.transaction(PREVIEW_CACHE_STORE_NAME, "readwrite");
-    const store = transaction.objectStore(PREVIEW_CACHE_STORE_NAME);
-    const request = store.put(blob, cacheKey);
-
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
-}
-
 function getFaviconUrl(url) {
   return `https://www.google.com/s2/favicons?sz=64&domain_url=${encodeURIComponent(url)}`;
 }
@@ -261,7 +203,19 @@ function getInitialSelectedFolderId() {
   }
 
   const folderId = new URLSearchParams(window.location.search).get("folder");
-  return folderId || "1";
+  if (folderId) {
+    return folderId;
+  }
+
+  return window.localStorage.getItem("gridmarks-selected-folder-id") || "1";
+}
+
+function getInitialTargetBookmarkId() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  return new URLSearchParams(window.location.search).get("bookmark") || "";
 }
 
 function getDeletionToastLabel(node) {
@@ -807,6 +761,7 @@ function TreeNode({
 }
 
 function App() {
+  const initialTargetBookmarkId = getInitialTargetBookmarkId();
   const [tree, setTree] = useState(FALLBACK_TREE);
   const [selectedFolderId, setSelectedFolderId] = useState(getInitialSelectedFolderId);
   const [expandedFolders, setExpandedFolders] = useState(() => new Set(["1"]));
@@ -870,6 +825,7 @@ function App() {
   const previewObjectUrlsRef = useRef(new Map());
   const previewCacheLookupRef = useRef(new Set());
   const previewCacheWriteRef = useRef(new Set());
+  const initialBookmarkHandledRef = useRef(false);
 
   treeRef.current = tree;
   selectedFolderIdRef.current = selectedFolderId;
@@ -1134,7 +1090,11 @@ function App() {
 
       try {
         const nodes = await fetchBookmarksTree();
-        const initialId = getFirstFolderId(nodes) || "1";
+        const visibleNodes = getVisibleRootFolders(nodes);
+        const requestedFolderId = getInitialSelectedFolderId();
+        const requestedBookmarkId = getInitialTargetBookmarkId();
+        const targetParentId = requestedBookmarkId ? findParentId(visibleNodes, requestedBookmarkId) : "";
+        const initialId = normalizeSelectedFolderId(nodes, targetParentId || requestedFolderId) || "1";
         setTree(nodes);
         setSelectedFolderId(initialId);
         setExpandedFolders(new Set(getPathIds(nodes, initialId)));
@@ -1249,6 +1209,14 @@ function App() {
   }, [folderIconVariant]);
 
   useEffect(() => {
+    if (!selectedFolderId) {
+      return;
+    }
+
+    window.localStorage.setItem("gridmarks-selected-folder-id", selectedFolderId);
+  }, [selectedFolderId]);
+
+  useEffect(() => {
     if (!toastState) {
       return undefined;
     }
@@ -1307,6 +1275,29 @@ function App() {
     setSelectedItemIds([]);
     setSelectionAnchorId(null);
   }, [selectedFolderId]);
+
+  useEffect(() => {
+    if (!initialTargetBookmarkId || initialBookmarkHandledRef.current) {
+      return;
+    }
+
+    const targetBookmark = findNodeById(rootFolders, initialTargetBookmarkId);
+    if (!targetBookmark || isFolder(targetBookmark)) {
+      return;
+    }
+
+    const parentId = findParentId(rootFolders, initialTargetBookmarkId);
+    if (!parentId) {
+      initialBookmarkHandledRef.current = true;
+      return;
+    }
+
+    initialBookmarkHandledRef.current = true;
+    setSelectedFolderId(parentId);
+    setSelectedItemIds([initialTargetBookmarkId]);
+    setSelectionAnchorId(initialTargetBookmarkId);
+    setExpandedFolders((current) => new Set([...current, ...getFolderTrailIds(rootFolders, parentId)]));
+  }, [initialTargetBookmarkId, rootFolders]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1443,6 +1434,17 @@ function App() {
   const orderIdsWithinCurrentFolder = (ids) => {
     const idSet = new Set(ids);
     return childItems.filter((node) => idSet.has(node.id)).map((node) => node.id);
+  };
+
+  const orderDraggedIds = (ids) => {
+    const orderedVisibleIds = orderIdsWithinCurrentFolder(ids);
+    if (orderedVisibleIds.length === ids.length) {
+      return orderedVisibleIds;
+    }
+
+    const orderedVisibleIdSet = new Set(orderedVisibleIds);
+    const missingIds = ids.filter((id) => !orderedVisibleIdSet.has(id));
+    return [...orderedVisibleIds, ...missingIds];
   };
 
   const getClipboardNodes = (clipboard = bookmarkClipboard) => clipboard?.nodes ?? (clipboard?.node ? [clipboard.node] : []);
@@ -1584,7 +1586,7 @@ function App() {
 
   const moveNodesToFolder = async (sourceIds, targetFolderId) => {
     const beforeSnapshot = captureSnapshot();
-    const orderedSourceIds = orderIdsWithinCurrentFolder(sourceIds);
+    const orderedSourceIds = orderDraggedIds(sourceIds);
     const targetFolder = findNodeById(tree, targetFolderId);
 
     if (!orderedSourceIds.length || !targetFolder || !isFolder(targetFolder)) {
@@ -1762,23 +1764,38 @@ function App() {
     }
 
     const sourceId = draggingNodeIds[0];
-    const sourceNode = findNodeById(tree, sourceId);
+    const sourceNodes = draggingNodeIds
+      .map((id) => findNodeById(tree, id))
+      .filter(Boolean);
+    const canReorderFolders =
+      draggingNodeIds.length === 1 &&
+      sourceNodes.length === 1 &&
+      isFolder(sourceNodes[0]) &&
+      !protectedFolderIds.has(sourceId);
 
-    if (!sourceNode || !isFolder(sourceNode) || protectedFolderIds.has(sourceId)) {
+    if (!sourceNodes.length) {
       return;
     }
 
-    const rect = event.currentTarget.getBoundingClientRect();
-    const startThreshold = rect.top + rect.height * 0.28;
-    const endThreshold = rect.bottom - rect.height * 0.28;
     let nextPlacement;
 
-    if (event.clientY < startThreshold) {
-      nextPlacement = { targetId: node.id, mode: "before" };
-    } else if (event.clientY > endThreshold) {
-      nextPlacement = { targetId: node.id, mode: "after" };
+    if (canReorderFolders) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      const startThreshold = rect.top + rect.height * 0.28;
+      const endThreshold = rect.bottom - rect.height * 0.28;
+
+      if (event.clientY < startThreshold) {
+        nextPlacement = { targetId: node.id, mode: "before" };
+      } else if (event.clientY > endThreshold) {
+        nextPlacement = { targetId: node.id, mode: "after" };
+      } else {
+        nextPlacement = { targetId: node.id, mode: "inside" };
+      }
     } else {
       nextPlacement = { targetId: node.id, mode: "inside" };
+    }
+
+    if (nextPlacement.mode === "inside") {
       if (dropTargetFolderId !== node.id) {
         setDropTargetFolderId(node.id);
       }
@@ -1816,12 +1833,25 @@ function App() {
       return;
     }
 
-    if (dropPlacement?.targetId === node.id && dropPlacement.mode !== "inside") {
+    const sourceNodes = sourceIds
+      .map((id) => findNodeById(tree, id))
+      .filter(Boolean);
+    const canReorderFolders =
+      sourceIds.length === 1 &&
+      sourceNodes.length === 1 &&
+      isFolder(sourceNodes[0]);
+
+    if (canReorderFolders && dropPlacement?.targetId === node.id && dropPlacement.mode !== "inside") {
       await moveFolderRelativeToSibling(sourceId, node.id, dropPlacement.mode);
       return;
     }
 
-    await moveFolderToFolder(sourceId, node.id);
+    if (canReorderFolders && sourceNodes[0].id === sourceId) {
+      await moveFolderToFolder(sourceId, node.id);
+      return;
+    }
+
+    await moveNodesToFolder(sourceIds, node.id);
   };
 
   const handleFolderDragOver = (event, folderId) => {

@@ -128,6 +128,10 @@ function findFolderPath(nodes, targetId, trail = []) {
   return [];
 }
 
+function getFolderTrailIds(nodes, targetId) {
+  return findFolderPath(nodes, targetId);
+}
+
 function getDefaultFolderId(folders, lastFolderId) {
   if (lastFolderId && folders.some((folder) => folder.id === lastFolderId)) {
     return lastFolderId;
@@ -415,7 +419,7 @@ export default function SavePopup() {
 
         if (capturedPreviewUrl) {
           try {
-            await cacheCapturedPreview(tab.url, capturedPreviewUrl);
+            await cacheCapturedPreview(activeBookmark.id, activeBookmark.url || tab.url, capturedPreviewUrl);
           } catch {
             // Ignore preview cache failures and keep the in-popup preview only.
           }
@@ -427,7 +431,8 @@ export default function SavePopup() {
 
         setTabInfo({
           title: activeBookmark.title || tab.title || getHostname(tab.url),
-          url: tab.url,
+          incognito: Boolean(tab.incognito),
+          url: activeBookmark.url || tab.url,
           faviconUrl: tab.favIconUrl || "",
         });
         setFolders(nextFolders);
@@ -506,7 +511,7 @@ export default function SavePopup() {
     });
 
     if (blob) {
-      await cacheCapturedPreviewBlob(tabInfo.url, blob);
+      await cacheCapturedPreviewBlob(bookmarkId, tabInfo.url, blob);
     }
   };
 
@@ -537,7 +542,9 @@ export default function SavePopup() {
       return;
     }
 
-    event.preventDefault();
+    if (event.cancelable) {
+      event.preventDefault();
+    }
     const frameRect = previewFrameRef.current.getBoundingClientRect();
     const pointerX = event.clientX - frameRect.left;
     const pointerY = event.clientY - frameRect.top;
@@ -666,6 +673,7 @@ export default function SavePopup() {
         type: "open-gridmarks",
         folderId,
         bookmarkId,
+        incognito: Boolean(tabInfo?.incognito),
       });
       window.close();
     } catch (nextError) {

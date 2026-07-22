@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getPreviewUrl, readPreviewCacheBlob, writePreviewCacheBlob } from "./previewCache";
+import { getPreviewUrl, readCachedPreviewForBookmark, writePreviewCacheBlob } from "./previewCache";
 
 const FALLBACK_TREE = [
   {
@@ -1245,12 +1245,21 @@ function App() {
     );
   }, [selectedFolder, selectedFolderSortMode]);
   const normalizedQuery = query.trim().toLowerCase();
-  const visiblePreviewCacheKeys = useMemo(
+  const visiblePreviewItems = useMemo(
     () =>
       childItems
         .filter((node) => node.url)
-        .map((node) => getPreviewUrl(node.url))
-        .filter((cacheKey, index, values) => values.indexOf(cacheKey) === index),
+        .map((node) => ({
+          bookmarkId: node.id,
+          cacheKey: getPreviewUrl(node.url),
+          url: node.url,
+        }))
+        .filter(
+          (entry, index, values) =>
+            values.findIndex(
+              (candidate) => candidate.bookmarkId === entry.bookmarkId && candidate.cacheKey === entry.cacheKey,
+            ) === index,
+        ),
     [childItems],
   );
   const breadcrumbs = buildPath(rootFolders, selectedFolder?.id ?? "");
@@ -1303,7 +1312,7 @@ function App() {
     let cancelled = false;
 
     const loadCachedPreviews = async () => {
-      for (const cacheKey of visiblePreviewCacheKeys) {
+      for (const { bookmarkId, cacheKey, url } of visiblePreviewItems) {
         if (cachedPreviewUrls[cacheKey] || previewCacheLookupRef.current.has(cacheKey)) {
           continue;
         }
@@ -1311,7 +1320,7 @@ function App() {
         previewCacheLookupRef.current.add(cacheKey);
 
         try {
-          const blob = await readPreviewCacheBlob(cacheKey);
+          const blob = await readCachedPreviewForBookmark(bookmarkId, url);
           if (!cancelled && blob) {
             setCachedPreviewBlob(cacheKey, blob);
           }
@@ -1326,7 +1335,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [cachedPreviewUrls, visiblePreviewCacheKeys]);
+  }, [cachedPreviewUrls, visiblePreviewItems]);
 
   useEffect(
     () => () => {
@@ -1348,6 +1357,18 @@ function App() {
         ...current,
         [bookmarkId]: true,
       };
+    });
+  };
+
+  const clearPreviewFailed = (bookmarkId) => {
+    setFailedPreviewUrls((current) => {
+      if (!current[bookmarkId]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[bookmarkId];
+      return next;
     });
   };
 
@@ -1413,10 +1434,35 @@ function App() {
       return;
     }
 
+    clearPreviewFailed(bookmarkId);
+
     if (!isCachedPreview) {
       void cachePreviewImage(cacheKey);
     }
   };
+
+  useEffect(() => {
+    if (!Object.keys(failedPreviewUrls).length) {
+      return;
+    }
+
+    const recoveredBookmarkIds = childItems
+      .filter((item) => item.url && cachedPreviewUrls[getPreviewUrl(item.url)])
+      .map((item) => item.id)
+      .filter((id) => failedPreviewUrls[id]);
+
+    if (!recoveredBookmarkIds.length) {
+      return;
+    }
+
+    setFailedPreviewUrls((current) => {
+      const next = { ...current };
+      for (const id of recoveredBookmarkIds) {
+        delete next[id];
+      }
+      return next;
+    });
+  }, [cachedPreviewUrls, childItems, failedPreviewUrls]);
 
   const clearDragState = () => {
     setDraggingNodeIds([]);

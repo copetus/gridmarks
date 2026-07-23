@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { BrandLockup } from "./components/BrandLockup";
 
 const features = [
   {
@@ -92,9 +93,7 @@ export default function Home() {
   const previewTargetRef = useRef({ x: 0, y: 0 });
   const [featuredScale, setFeaturedScale] = useState(0.84);
   const [featureRevealProgress, setFeatureRevealProgress] = useState(() => features.map(() => 0));
-  const [isBrandHovered, setIsBrandHovered] = useState(false);
   const [isBrandAutoRevealed, setIsBrandAutoRevealed] = useState(false);
-  const [hasBrandInteracted, setHasBrandInteracted] = useState(false);
   const [activeFeatureIndex, setActiveFeatureIndex] = useState<number | null>(null);
   const [previewSide, setPreviewSide] = useState<"left" | "right">("right");
   const [previewPosition, setPreviewPosition] = useState({ x: 0, y: 0 });
@@ -228,45 +227,7 @@ export default function Home() {
   return (
     <main className="page-shell">
       <header className="masthead">
-        <a
-          className={`brand-lockup ${isBrandHovered || isBrandAutoRevealed ? "is-hovered" : ""} ${
-            hasBrandInteracted ? "has-interacted" : ""
-          }`}
-          href="https://github.com/copetus/gridmarks"
-          target="_blank"
-          rel="noreferrer"
-          onMouseEnter={() => {
-            setHasBrandInteracted(true);
-            setIsBrandHovered(true);
-          }}
-          onMouseLeave={() => {
-            setHasBrandInteracted(true);
-            setIsBrandHovered(false);
-          }}
-          onFocus={() => {
-            setHasBrandInteracted(true);
-            setIsBrandHovered(true);
-          }}
-          onBlur={() => {
-            setHasBrandInteracted(true);
-            setIsBrandHovered(false);
-          }}
-        >
-          <div className="brand-lockup-default">
-            <img src="/gridmarks-icon-128.png" alt="" />
-            <div>
-              <span>Gridmarks</span>
-            </div>
-          </div>
-          <span className="brand-lockup-cta">
-            <span className="brand-lockup-cta-label">Get the extension</span>
-            <span className="brand-lockup-cta-icon" aria-hidden="true">
-              <svg focusable="false" viewBox="0 0 24 24">
-                <path d="M6 6v2h8.59L5 17.59 6.41 19 16 9.41V18h2V6z" />
-              </svg>
-            </span>
-          </span>
-        </a>
+        <BrandLockup autoRevealed={isBrandAutoRevealed} />
       </header>
 
       <section className="hero-section">
@@ -380,9 +341,6 @@ export default function Home() {
 
       <footer className="page-footer">
         <div className="page-footer-links">
-          <a className="page-footer-link" href="/privacy">
-            Privacy Policy
-          </a>
           <a
             className="page-footer-link"
             href="https://www.linkedin.com/in/salomono"
@@ -390,6 +348,9 @@ export default function Home() {
             rel="noreferrer"
           >
             by <span className="page-footer-link-name">Salomon Onyegbulem</span>
+          </a>
+          <a className="page-footer-link" href="/privacy">
+            Privacy Policy
           </a>
         </div>
       </footer>

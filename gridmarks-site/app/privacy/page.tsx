@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { BrandLockup } from "../components/BrandLockup";
+import { TransitionLink } from "../components/TransitionLink";
 
 export const metadata: Metadata = {
   title: "Privacy Policy | Gridmarks",
@@ -10,11 +11,11 @@ export const metadata: Metadata = {
 export default function PrivacyPage() {
   return (
     <main className="policy-shell">
-      <div className="policy-header">
+      <div className="policy-header page-transition-header">
         <BrandLockup />
       </div>
 
-      <section className="policy-hero">
+      <section className="policy-hero page-transition-hero">
         <h1>Privacy Policy</h1>
         <p className="policy-lead">
           Gridmarks uses a third-party thumbnail service to generate bookmark thumbnails, sending bookmarked page URLs
@@ -22,7 +23,7 @@ export default function PrivacyPage() {
         </p>
       </section>
 
-      <section className="policy-card">
+      <section className="policy-card page-transition-policy-card">
         <div className="policy-section">
           <p>
             When preview images are enabled, Gridmarks sends bookmarked page URLs to a third-party thumbnail service (
@@ -43,10 +44,10 @@ export default function PrivacyPage() {
         </div>
       </section>
 
-      <footer className="policy-footer">
-        <a className="policy-footer-link" href="/">
+      <footer className="policy-footer page-transition-footer">
+        <TransitionLink className="policy-footer-link" href="/">
           Back to Gridmarks
-        </a>
+        </TransitionLink>
       </footer>
     </main>
   );

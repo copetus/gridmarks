@@ -88,6 +88,140 @@ a {
   }
 }
 
+@keyframes route-piece-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(-24px);
+  }
+}
+
+@keyframes route-piece-in {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.page-transition-header {
+  view-transition-name: page-header;
+}
+
+.page-transition-hero {
+  view-transition-name: page-hero;
+}
+
+.page-transition-featured {
+  view-transition-name: landing-featured;
+}
+
+.page-transition-features {
+  view-transition-name: landing-features;
+}
+
+.page-transition-policy-card {
+  view-transition-name: privacy-card;
+}
+
+.page-transition-footer {
+  view-transition-name: page-footer;
+}
+
+html.is-route-transitioning .brand-lockup,
+html.is-route-transitioning .hero-section,
+html.is-route-transitioning .featured-image-reveal,
+html.is-route-transitioning .hero-title-line-inner {
+  animation: none !important;
+  opacity: 1 !important;
+  transform: none !important;
+}
+
+@supports (view-transition-name: none) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
+    mix-blend-mode: normal;
+  }
+
+  ::view-transition-old(page-header),
+  ::view-transition-new(page-header),
+  ::view-transition-old(page-hero),
+  ::view-transition-new(page-hero),
+  ::view-transition-old(landing-featured),
+  ::view-transition-new(landing-featured),
+  ::view-transition-old(landing-features),
+  ::view-transition-new(landing-features),
+  ::view-transition-old(privacy-card),
+  ::view-transition-new(privacy-card),
+  ::view-transition-old(page-footer),
+  ::view-transition-new(page-footer) {
+    animation-duration: 540ms;
+    animation-fill-mode: both;
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  ::view-transition-old(page-header) {
+    animation-name: route-piece-out;
+    animation-delay: 0ms;
+  }
+
+  ::view-transition-new(page-header) {
+    animation-name: route-piece-in;
+    animation-delay: 40ms;
+  }
+
+  ::view-transition-old(page-hero) {
+    animation-name: route-piece-out;
+    animation-delay: 30ms;
+  }
+
+  ::view-transition-new(page-hero) {
+    animation-name: route-piece-in;
+    animation-delay: 70ms;
+  }
+
+  ::view-transition-old(landing-featured),
+  ::view-transition-old(privacy-card) {
+    animation-name: route-piece-out;
+    animation-delay: 70ms;
+  }
+
+  ::view-transition-new(landing-featured),
+  ::view-transition-new(privacy-card) {
+    animation-name: route-piece-in;
+    animation-delay: 110ms;
+  }
+
+  ::view-transition-old(landing-features) {
+    animation-name: route-piece-out;
+    animation-delay: 110ms;
+  }
+
+  ::view-transition-new(landing-features) {
+    animation-name: route-piece-in;
+    animation-delay: 150ms;
+  }
+
+  ::view-transition-old(page-footer) {
+    animation-name: route-piece-out;
+    animation-delay: 150ms;
+  }
+
+  ::view-transition-new(page-footer) {
+    animation-name: route-piece-in;
+    animation-delay: 190ms;
+  }
+}
+
 .masthead,
 .hero-section,
 .featured-image-section {

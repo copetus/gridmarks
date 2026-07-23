@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getPreviewUrl, readCachedPreviewForBookmark, writePreviewCacheBlob } from "./previewCache";
+import { getPreviewUrl, readCachedPreviewRecordForBookmark, writePreviewCacheBlob } from "./previewCache";
 
 const FALLBACK_TREE = [
   {
@@ -217,6 +217,32 @@ function getInitialTargetBookmarkId() {
 
   return new URLSearchParams(window.location.search).get("bookmark") || "";
 }
+
+function getInitialViewMode() {
+  if (typeof window === "undefined") {
+    return "list";
+  }
+
+  return window.localStorage.getItem("gridmarks-view-mode") || "list";
+}
+
+function getInitialPreviewConsentStatus() {
+  if (typeof window === "undefined") {
+    return "unknown";
+  }
+
+  return window.localStorage.getItem("gridmarks-preview-consent-status") || "unknown";
+}
+
+function getInitialPreviewGenerationEnabled() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  return window.localStorage.getItem("gridmarks-preview-generation-enabled") === "true";
+}
+
+const PRIVACY_POLICY_URL = "https://gridmarks-extension.salomono.chatgpt.site/privacy";
 
 function getDeletionToastLabel(node) {
   const fallbackLabel = isFolder(node) ? "Folder" : "Bookmark";
@@ -767,7 +793,7 @@ function App() {
   const [expandedFolders, setExpandedFolders] = useState(() => new Set(["1"]));
   const [folderSortModes, setFolderSortModes] = useState({});
   const [query, setQuery] = useState("");
-  const [viewMode, setViewMode] = useState("grid");
+  const [viewMode, setViewMode] = useState(getInitialViewMode);
   const [loadingState, setLoadingState] = useState("loading");
   const [failedPreviewUrls, setFailedPreviewUrls] = useState({});
   const [activeMenuId, setActiveMenuId] = useState(null);
@@ -780,9 +806,13 @@ function App() {
   const [dropPlacement, setDropPlacement] = useState(null);
   const [editingNode, setEditingNode] = useState(null);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
+  const [previewConsentDialogOpen, setPreviewConsentDialogOpen] = useState(false);
+  const [previewConsentContext, setPreviewConsentContext] = useState("grid");
   const [createDialog, setCreateDialog] = useState(null);
   const [editDraft, setEditDraft] = useState({ title: "", url: "" });
   const [createDialogErrors, setCreateDialogErrors] = useState({});
+  const [previewConsentStatus, setPreviewConsentStatus] = useState(getInitialPreviewConsentStatus);
+  const [previewGenerationEnabled, setPreviewGenerationEnabled] = useState(getInitialPreviewGenerationEnabled);
   const [folderIconVariant, setFolderIconVariant] = useState(() => {
     if (typeof window === "undefined") {
       return "filled";
@@ -791,6 +821,10 @@ function App() {
     return window.localStorage.getItem("gridmarks-folder-icon-variant") || "filled";
   });
   const [settingsDraft, setSettingsDraft] = useState(() => ({
+    previewGenerationEnabled:
+      typeof window === "undefined"
+        ? false
+        : window.localStorage.getItem("gridmarks-preview-generation-enabled") === "true",
     folderIconVariant:
       typeof window === "undefined"
         ? "filled"
@@ -826,6 +860,8 @@ function App() {
   const previewCacheLookupRef = useRef(new Set());
   const previewCacheWriteRef = useRef(new Set());
   const initialBookmarkHandledRef = useRef(false);
+
+  const previewGenerationAllowed = previewConsentStatus === "accepted" && previewGenerationEnabled;
 
   treeRef.current = tree;
   selectedFolderIdRef.current = selectedFolderId;
@@ -1209,6 +1245,18 @@ function App() {
   }, [folderIconVariant]);
 
   useEffect(() => {
+    window.localStorage.setItem("gridmarks-view-mode", viewMode);
+  }, [viewMode]);
+
+  useEffect(() => {
+    window.localStorage.setItem("gridmarks-preview-consent-status", previewConsentStatus);
+  }, [previewConsentStatus]);
+
+  useEffect(() => {
+    window.localStorage.setItem("gridmarks-preview-generation-enabled", String(previewGenerationEnabled));
+  }, [previewGenerationEnabled]);
+
+  useEffect(() => {
     if (!selectedFolderId) {
       return;
     }
@@ -1320,9 +1368,9 @@ function App() {
         previewCacheLookupRef.current.add(cacheKey);
 
         try {
-          const blob = await readCachedPreviewForBookmark(bookmarkId, url);
-          if (!cancelled && blob) {
-            setCachedPreviewBlob(cacheKey, blob);
+          const previewRecord = await readCachedPreviewRecordForBookmark(bookmarkId, url);
+          if (!cancelled && previewRecord) {
+            setCachedPreviewBlob(cacheKey, previewRecord.blob, previewRecord.source);
           }
         } catch {
           // Ignore preview cache read failures and fall back to the live thumbnail service.
@@ -1337,7 +1385,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [cachedPreviewUrls, visiblePreviewItems]);
+  }, [cachedPreviewUrls, previewGenerationAllowed, visiblePreviewItems]);
 
   useEffect(
     () => () => {
@@ -1374,7 +1422,7 @@ function App() {
     });
   };
 
-  const setCachedPreviewBlob = (cacheKey, blob) => {
+  const setCachedPreviewBlob = (cacheKey, blob, source) => {
     const existingObjectUrl = previewObjectUrlsRef.current.get(cacheKey);
     if (existingObjectUrl) {
       URL.revokeObjectURL(existingObjectUrl);
@@ -1383,18 +1431,26 @@ function App() {
     const nextObjectUrl = URL.createObjectURL(blob);
     previewObjectUrlsRef.current.set(cacheKey, nextObjectUrl);
     setCachedPreviewUrls((current) => {
-      if (current[cacheKey] === nextObjectUrl) {
+      const currentEntry = current[cacheKey];
+      if (currentEntry?.url === nextObjectUrl && currentEntry?.source === source) {
         return current;
       }
 
       return {
         ...current,
-        [cacheKey]: nextObjectUrl,
+        [cacheKey]: {
+          source,
+          url: nextObjectUrl,
+        },
       };
     });
   };
 
   const cachePreviewImage = async (cacheKey) => {
+    if (!previewGenerationAllowed) {
+      return;
+    }
+
     if (cachedPreviewUrls[cacheKey] || previewCacheWriteRef.current.has(cacheKey)) {
       return;
     }
@@ -1422,7 +1478,7 @@ function App() {
       }
 
       await writePreviewCacheBlob(cacheKey, blob);
-      setCachedPreviewBlob(cacheKey, blob);
+      setCachedPreviewBlob(cacheKey, blob, "legacy");
     } catch {
       // Ignore preview cache write failures and continue showing the live thumbnail.
     } finally {
@@ -1449,7 +1505,13 @@ function App() {
     }
 
     const recoveredBookmarkIds = childItems
-      .filter((item) => item.url && cachedPreviewUrls[getPreviewUrl(item.url)])
+      .filter((item) => {
+        if (!item.url) {
+          return false;
+        }
+
+        return Boolean(cachedPreviewUrls[getPreviewUrl(item.url)]);
+      })
       .map((item) => item.id)
       .filter((id) => failedPreviewUrls[id]);
 
@@ -1464,7 +1526,7 @@ function App() {
       }
       return next;
     });
-  }, [cachedPreviewUrls, childItems, failedPreviewUrls]);
+  }, [cachedPreviewUrls, childItems, failedPreviewUrls, previewGenerationAllowed]);
 
   const clearDragState = () => {
     setDraggingNodeIds([]);
@@ -2734,6 +2796,11 @@ function App() {
     setCreateContextMenu({ includeSortOptions: true, x: clampedX, y: clampedY });
   };
 
+  const openPrivacyPolicy = () => {
+    setCreateContextMenu(null);
+    window.open(PRIVACY_POLICY_URL, "_blank", "noopener,noreferrer");
+  };
+
   const showToastMessage = (message, undo = null) => {
     setToastState({ message, undo });
   };
@@ -2747,29 +2814,91 @@ function App() {
       await handleUndo();
     } else if (toastState.undo.type === "settings") {
       setFolderIconVariant(toastState.undo.folderIconVariant);
+      setPreviewGenerationEnabled(toastState.undo.previewGenerationEnabled);
     }
 
     setToastState(null);
   };
 
+  const openPreviewConsentDialog = (context) => {
+    setPreviewConsentContext(context);
+    setPreviewConsentDialogOpen(true);
+  };
+
+  const closePreviewConsentDialog = () => {
+    setPreviewConsentDialogOpen(false);
+  };
+
+  const handleAcceptPreviewConsent = () => {
+    setPreviewConsentStatus("accepted");
+    setPreviewGenerationEnabled(true);
+    setSettingsDraft((current) => ({ ...current, previewGenerationEnabled: true }));
+    setPreviewConsentDialogOpen(false);
+
+    if (previewConsentContext === "grid") {
+      setViewMode("grid");
+    }
+  };
+
+  const handleDeclinePreviewConsent = () => {
+    setPreviewConsentStatus("declined");
+    setPreviewGenerationEnabled(false);
+    setSettingsDraft((current) => ({ ...current, previewGenerationEnabled: false }));
+    setPreviewConsentDialogOpen(false);
+
+    if (previewConsentContext === "grid") {
+      setViewMode("grid");
+    }
+  };
+
+  const handleViewModeChange = (nextMode) => {
+    if (nextMode === "grid" && viewMode !== "grid" && previewConsentStatus === "unknown") {
+      openPreviewConsentDialog("grid");
+      return;
+    }
+
+    setViewMode(nextMode);
+  };
+
   const openSettingsDialog = () => {
     setCreateContextMenu(null);
-    setSettingsDraft({ folderIconVariant });
+    setSettingsDraft({
+      folderIconVariant,
+      previewGenerationEnabled,
+    });
     setSettingsDialogOpen(true);
   };
 
   const closeSettingsDialog = () => {
     setSettingsDialogOpen(false);
-    setSettingsDraft({ folderIconVariant });
+    setSettingsDraft({
+      folderIconVariant,
+      previewGenerationEnabled,
+    });
   };
 
   const saveSettings = () => {
     const previousVariant = folderIconVariant;
+    const previousPreviewGenerationEnabled = previewGenerationEnabled;
     setFolderIconVariant(settingsDraft.folderIconVariant);
-    setSettingsDialogOpen(false);
+
+    if (settingsDraft.previewGenerationEnabled) {
+      if (previewConsentStatus === "accepted") {
+        setPreviewGenerationEnabled(true);
+        setSettingsDialogOpen(false);
+      } else {
+        setSettingsDialogOpen(false);
+        openPreviewConsentDialog("settings");
+      }
+    } else {
+      setPreviewGenerationEnabled(false);
+      setSettingsDialogOpen(false);
+    }
+
     showToastMessage("Settings updated", {
       type: "settings",
       folderIconVariant: previousVariant,
+      previewGenerationEnabled: previousPreviewGenerationEnabled,
     });
   };
 
@@ -3280,7 +3409,7 @@ function App() {
                   <button
                     type="button"
                     className={viewMode === "grid" ? "is-active" : ""}
-                    onClick={() => setViewMode("grid")}
+                    onClick={() => handleViewModeChange("grid")}
                     aria-label="Grid view"
                   >
                     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -3290,7 +3419,7 @@ function App() {
                   <button
                     type="button"
                     className={viewMode === "list" ? "is-active" : ""}
-                    onClick={() => setViewMode("list")}
+                    onClick={() => handleViewModeChange("list")}
                     aria-label="List view"
                   >
                     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -3445,12 +3574,16 @@ function App() {
                     const fallbackDomain = truncateDomain(hostname);
                     const themeColor = getDomainTheme(hostname);
                     const previewCacheKey = getPreviewUrl(item.url || "");
-                    const previewSource = cachedPreviewUrls[previewCacheKey] || previewCacheKey;
-                    const isCachedPreview = Boolean(cachedPreviewUrls[previewCacheKey]);
+                    const cachedPreviewEntry = cachedPreviewUrls[previewCacheKey];
+                    const cachedPreviewSource = cachedPreviewEntry?.url || "";
+                    const previewSource = cachedPreviewSource || (previewGenerationAllowed ? previewCacheKey : "");
+                    const isCachedPreview = Boolean(cachedPreviewSource);
+                    const showPreviewImage = Boolean(previewSource) && !previewFailed;
+                    const showPreviewFallback = previewFailed || !previewSource;
 
                     return (
                       <div className="bookmark-preview" style={{ "--preview-accent": themeColor }}>
-                        {!previewFailed && (
+                        {showPreviewImage && (
                           <img
                             className="bookmark-preview-image"
                             src={previewSource}
@@ -3461,7 +3594,7 @@ function App() {
                             onError={() => markPreviewFailed(item.id)}
                           />
                         )}
-                        <div className={`bookmark-preview-fallback ${previewFailed ? "is-visible" : ""}`}>
+                        <div className={`bookmark-preview-fallback ${showPreviewFallback ? "is-visible" : ""}`}>
                           <span>{fallbackDomain}</span>
                         </div>
                       </div>
@@ -3592,6 +3725,13 @@ function App() {
               >
                 <span>Settings</span>
               </button>
+              <button
+                type="button"
+                className="bookmark-menu-item"
+                onClick={openPrivacyPolicy}
+              >
+                <span>Privacy policy</span>
+              </button>
             </>
           )}
         </div>
@@ -3608,6 +3748,36 @@ function App() {
             }}
           >
             <h2>Settings</h2>
+            <div className="settings-section">
+              <label className="settings-switch-row">
+                <span className="settings-switch-copy">
+                  <strong>Generate preview images</strong>
+                  <small className="settings-switch-description">
+                    Gridmarks sends bookmarked page URLs to Thum.io, a third-party thumbnail service, to fetch
+                    preview images for your bookmarks.
+                  </small>
+                  <small className="settings-switch-note">
+                    Locally captured previews from the save popup still appear even when this is off.
+                  </small>
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={settingsDraft.previewGenerationEnabled}
+                  aria-label="Generate preview images"
+                  className={`settings-switch ${settingsDraft.previewGenerationEnabled ? "is-enabled" : ""}`}
+                  onClick={() =>
+                    setSettingsDraft((current) => ({
+                      ...current,
+                      previewGenerationEnabled: !current.previewGenerationEnabled,
+                    }))
+                  }
+                >
+                  <span className="settings-switch-track" />
+                  <span className="settings-switch-thumb" />
+                </button>
+              </label>
+            </div>
             <div className="settings-section">
               <h3>Directory icon</h3>
               <p>Select the icon to represent folders.</p>
@@ -3640,6 +3810,45 @@ function App() {
               </button>
               <button type="button" className="dialog-button is-primary" onClick={saveSettings}>
                 Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {previewConsentDialogOpen && (
+        <div
+          className="dialog-backdrop"
+          onClick={handleDeclinePreviewConsent}
+        >
+          <div
+            className="edit-dialog preview-consent-dialog"
+            onClick={(event) => {
+              event.stopPropagation();
+            }}
+          >
+            <h2>Enable bookmark previews?</h2>
+            <p className="preview-consent-copy">
+              To generate bookmark previews, Gridmarks sends bookmarked page URLs to Thum.io, a third-party
+              thumbnail service. This shares those bookmarked site URLs with that provider so it can return
+              preview images.
+            </p>
+            <p className="preview-consent-note">
+              If you choose Not now, grid view will still work with your own saved previews and placeholders.
+            </p>
+            <a
+              className="preview-consent-link"
+              href={PRIVACY_POLICY_URL}
+              target="_blank"
+              rel="noreferrer"
+            >
+              View privacy policy
+            </a>
+            <div className="dialog-actions">
+              <button type="button" className="dialog-button is-secondary" onClick={handleDeclinePreviewConsent}>
+                Not now
+              </button>
+              <button type="button" className="dialog-button is-primary" onClick={handleAcceptPreviewConsent}>
+                Allow previews
               </button>
             </div>
           </div>

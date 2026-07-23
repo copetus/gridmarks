@@ -99,11 +99,19 @@ async function writePreviewBlobForBookmark(bookmarkId, url, blob) {
 }
 
 export async function readCachedPreviewForBookmark(bookmarkId, url) {
+  const previewRecord = await readCachedPreviewRecordForBookmark(bookmarkId, url);
+  return previewRecord?.blob ?? null;
+}
+
+export async function readCachedPreviewRecordForBookmark(bookmarkId, url) {
   const bookmarkCacheKey = getBookmarkPreviewCacheKey(bookmarkId);
   if (bookmarkCacheKey) {
     const bookmarkBlob = await readPreviewCacheBlob(bookmarkCacheKey);
     if (bookmarkBlob) {
-      return bookmarkBlob;
+      return {
+        blob: bookmarkBlob,
+        source: "bookmark",
+      };
     }
   }
 
@@ -117,7 +125,14 @@ export async function readCachedPreviewForBookmark(bookmarkId, url) {
     await writePreviewCacheBlob(bookmarkCacheKey, legacyBlob).catch(() => {});
   }
 
-  return legacyBlob;
+  if (!legacyBlob) {
+    return null;
+  }
+
+  return {
+    blob: legacyBlob,
+    source: "legacy",
+  };
 }
 
 export async function cacheCapturedPreview(bookmarkId, url, dataUrl) {

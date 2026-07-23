@@ -31,11 +31,5 @@
         "mac": "Option+D"
       }
     }
-  },
-  "web_accessible_resources": [
-    {
-      "resources": ["index.html", "assets/*"],
-      "matches": ["<all_urls>"]
-    }
-  ]
+  }
 }

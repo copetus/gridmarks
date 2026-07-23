@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { BrandLockup } from "./components/BrandLockup";
-import { TransitionLink } from "./components/TransitionLink";
 
 const features = [
   {
@@ -227,11 +226,11 @@ export default function Home() {
 
   return (
     <main className="page-shell">
-      <header className="masthead page-transition-header">
+      <header className="masthead">
         <BrandLockup autoRevealed={isBrandAutoRevealed} />
       </header>
 
-      <section className="hero-section page-transition-hero">
+      <section className="hero-section">
         <h1 aria-label="Bookmarks worth looking at.">
           <span className="hero-title-line">
             <span className="hero-title-line-inner">Bookmarks worth</span>
@@ -263,7 +262,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="featured-image-section page-transition-featured" id="featured-image">
+      <section className="featured-image-section" id="featured-image">
         <div className="featured-image-reveal">
           <figure
             ref={featuredCardRef}
@@ -284,7 +283,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="features-section page-transition-features">
+      <section className="features-section">
         <div className="section-heading">
           <p className="features-intro">What it does plain and simple</p>
         </div>
@@ -340,7 +339,7 @@ export default function Home() {
         </div>
       </section>
 
-      <footer className="page-footer page-transition-footer">
+      <footer className="page-footer">
         <div className="page-footer-links">
           <a
             className="page-footer-link"
@@ -350,9 +349,9 @@ export default function Home() {
           >
             by <span className="page-footer-link-name">Salomon Onyegbulem</span>
           </a>
-          <TransitionLink className="page-footer-link" href="/privacy">
+          <a className="page-footer-link" href="/privacy">
             Privacy Policy
-          </TransitionLink>
+          </a>
         </div>
       </footer>
     </main>

@@ -1326,6 +1326,8 @@ function App() {
           }
         } catch {
           // Ignore preview cache read failures and fall back to the live thumbnail service.
+        } finally {
+          previewCacheLookupRef.current.delete(cacheKey);
         }
       }
     };

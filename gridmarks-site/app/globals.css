@@ -139,7 +139,7 @@ a {
 .policy-shell {
   width: min(1480px, calc(100vw - 48px));
   margin: 0 auto;
-  padding: 28px 0 96px;
+  padding: 96px 0 96px;
 }
 
 .policy-header {
@@ -180,7 +180,7 @@ a {
 .policy-hero h1 {
   margin: 0 0 24px;
   max-width: none;
-  font-size: clamp(4rem, 9vw, 7.4rem);
+  font-size: 6rem;
   line-height: 0.92;
   letter-spacing: -0.05em;
 }
@@ -200,7 +200,7 @@ a {
 
 .policy-card {
   width: min(100%, 600px);
-  margin: 84px auto 0;
+  margin: 56px auto 0;
   padding: 16px;
   border: 1px solid var(--line);
   border-radius: 28px;

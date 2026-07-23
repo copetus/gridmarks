@@ -21,6 +21,26 @@ It keeps familiar bookmark-manager capabilities such as nested folder navigation
 
 ## Install The Extension
 
+### For Non-Technical People
+
+Use these steps if you just want to install the extension and do not normally work with code.
+
+1. Download this project to your computer and unzip it if needed.
+2. Open the project folder.
+3. Find the folder named `dist`.
+4. Open Google Chrome.
+5. In the address bar, go to `chrome://extensions`.
+6. Turn on `Developer mode` in the top-right corner.
+7. Click `Load unpacked`.
+8. Choose the `dist` folder from this project.
+9. The extension should now appear in Chrome and be ready to use.
+
+If Chrome says the extension is already installed and you made changes later, go back to `chrome://extensions` and click `Reload` on the Gridmarks card.
+
+### For Technical Users
+
+Use these steps if you need to build the extension yourself from source.
+
 1. Clone this repository or download it locally.
 2. From the project root, install dependencies:
 

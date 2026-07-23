@@ -203,7 +203,7 @@ a {
   margin: 56px auto 0;
   padding: 16px;
   border: 1px solid var(--line);
-  border-radius: 28px;
+  border-radius: 16px;
   background: #ffffff;
 }
 
@@ -263,7 +263,7 @@ a {
   .policy-card {
     margin-top: 56px;
     padding: 16px;
-    border-radius: 28px;
+    border-radius: 16px;
   }
 
   .policy-section + .policy-section {

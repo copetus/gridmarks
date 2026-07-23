@@ -112,6 +112,14 @@ a {
   padding-bottom: 16px;
 }
 
+.page-footer-links {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
 .page-footer-link {
   color: var(--muted);
   font-size: 14px;
@@ -125,6 +133,123 @@ a {
 }
 
 .page-footer-link:hover {
+  color: var(--foreground);
+}
+
+.policy-shell {
+  width: min(980px, calc(100vw - 40px));
+  margin: 0 auto;
+  padding: 32px 0 96px;
+}
+
+.policy-header {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 48px;
+}
+
+.policy-brand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 4px 24px;
+  border: 1px solid var(--line);
+  border-radius: 42px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px #3c404329;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.policy-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0;
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.policy-eyebrow {
+  margin: 0;
+  color: var(--soft);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.policy-hero h1,
+.policy-section h2 {
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+.policy-hero h1 {
+  margin: 18px 0 20px;
+  max-width: 12ch;
+  font-size: clamp(3rem, 8vw, 5.4rem);
+  line-height: 0.9;
+  letter-spacing: -0.05em;
+}
+
+.policy-lead,
+.policy-section p {
+  color: var(--muted);
+  line-height: 1.75;
+}
+
+.policy-lead {
+  max-width: 42rem;
+  margin: 0;
+  font-size: 1.08rem;
+}
+
+.policy-card {
+  margin: 56px auto 0;
+  padding: 32px;
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  background: var(--panel-strong);
+}
+
+.policy-section + .policy-section {
+  margin-top: 28px;
+  padding-top: 28px;
+  border-top: 1px solid var(--line);
+}
+
+.policy-section h2 {
+  margin: 0 0 12px;
+  font-size: clamp(1.5rem, 4vw, 2rem);
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.policy-section p {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.policy-section p + p {
+  margin-top: 12px;
+}
+
+.policy-footer {
+  display: flex;
+  justify-content: center;
+  margin-top: 36px;
+}
+
+.policy-footer-link {
+  color: var(--muted);
+  font-size: 14px;
+  text-decoration: none;
+  transition: color 160ms ease;
+}
+
+.policy-footer-link:hover {
   color: var(--foreground);
 }
 

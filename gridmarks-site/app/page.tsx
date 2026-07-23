@@ -379,14 +379,19 @@ export default function Home() {
       </section>
 
       <footer className="page-footer">
-        <a
-          className="page-footer-link"
-          href="https://www.linkedin.com/in/salomono"
-          target="_blank"
-          rel="noreferrer"
-        >
-          by <span className="page-footer-link-name">Salomon Onyegbulem</span>
-        </a>
+        <div className="page-footer-links">
+          <a className="page-footer-link" href="/privacy">
+            Privacy Policy
+          </a>
+          <a
+            className="page-footer-link"
+            href="https://www.linkedin.com/in/salomono"
+            target="_blank"
+            rel="noreferrer"
+          >
+            by <span className="page-footer-link-name">Salomon Onyegbulem</span>
+          </a>
+        </div>
       </footer>
     </main>
   );

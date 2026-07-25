@@ -3832,9 +3832,6 @@ function App() {
               thumbnail service. This shares those bookmarked site URLs with that provider so it can return
               preview images.
             </p>
-            <p className="preview-consent-note">
-              If you choose Not now, grid view will still work with your own saved previews and placeholders.
-            </p>
             <a
               className="preview-consent-link"
               href={PRIVACY_POLICY_URL}
@@ -3843,6 +3840,9 @@ function App() {
             >
               View privacy policy
             </a>
+            <p className="preview-consent-note">
+              If you choose Not now, grid view will still work with your own saved previews and placeholders.
+            </p>
             <div className="dialog-actions">
               <button type="button" className="dialog-button is-secondary" onClick={handleDeclinePreviewConsent}>
                 Not now

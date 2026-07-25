@@ -25,17 +25,16 @@ It keeps familiar bookmark-manager capabilities such as nested folder navigation
 
 Use these steps if you just want to install the extension and do not normally work with code.
 
-1. Download this project to your computer and unzip it if needed.
-2. Open the project folder.
-3. Find the folder named `dist`.
-4. Open Google Chrome.
-5. In the address bar, go to `chrome://extensions`.
-6. Turn on `Developer mode` in the top-right corner.
-7. Click `Load unpacked`.
-8. Choose the `dist` folder from this project.
-9. The extension should now appear in Chrome and be ready to use.
+1. Go to the latest **GitHub Release** for Gridmarks and download the ready-made extension zip file.
+2. Unzip the file somewhere easy to find, such as your Desktop or Downloads folder.
+3. Open Google Chrome.
+4. In the address bar, go to `chrome://extensions`.
+5. Turn on `Developer mode` in the top-right corner.
+6. Click `Load unpacked`.
+7. Select the unzipped Gridmarks folder.
+8. The extension should now appear in Chrome and be ready to use.
 
-If Chrome says the extension is already installed and you made changes later, go back to `chrome://extensions` and click `Reload` on the Gridmarks card.
+If you download a newer release later, unzip the new version and then click `Reload` on the Gridmarks card in `chrome://extensions`.
 
 ### For Technical Users
 

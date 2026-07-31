@@ -3,7 +3,7 @@
   "name": "Gridmarks",
   "description": "A Chrome-like bookmark surface with a denser Opera-style grid layout.",
   "version": "0.1.0",
-  "permissions": ["activeTab", "bookmarks", "storage", "tabs", "tabGroups"],
+  "permissions": ["activeTab", "bookmarks", "storage", "tabs", "tabGroups", "unlimitedStorage"],
   "icons": {
     "16": "icons/gridmarks-icon-16.png",
     "32": "icons/gridmarks-icon-32.png",

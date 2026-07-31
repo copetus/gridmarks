@@ -29,8 +29,88 @@ function getLegacyPreviewCacheKey(url) {
   return url ? getPreviewUrl(url) : "";
 }
 
+function getPersistentPreviewStorageKey(cacheKey) {
+  return cacheKey ? `gridmarks-preview-cache:${cacheKey}` : "";
+}
+
 const PREVIEW_CACHE_DB_NAME = "gridmarks-preview-cache";
 const PREVIEW_CACHE_STORE_NAME = "preview-images";
+
+function getChromeLocalStorage() {
+  if (typeof chrome === "undefined" || !chrome.storage?.local) {
+    return null;
+  }
+
+  return chrome.storage.local;
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+
+      reject(new Error("Unable to serialize preview image."));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("Unable to serialize preview image."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function dataUrlToBlob(dataUrl) {
+  if (!dataUrl) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(dataUrl);
+    const blob = await response.blob();
+    return blob instanceof Blob ? blob : null;
+  } catch {
+    return null;
+  }
+}
+
+async function readPreviewCacheBlobFromStorage(cacheKey) {
+  const storage = getChromeLocalStorage();
+  const storageKey = getPersistentPreviewStorageKey(cacheKey);
+  if (!storage || !storageKey) {
+    return null;
+  }
+
+  try {
+    const result = await storage.get(storageKey);
+    const dataUrl = result?.[storageKey];
+    if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/")) {
+      return null;
+    }
+
+    return dataUrlToBlob(dataUrl);
+  } catch {
+    return null;
+  }
+}
+
+async function writePreviewCacheBlobToStorage(cacheKey, blob) {
+  const storage = getChromeLocalStorage();
+  const storageKey = getPersistentPreviewStorageKey(cacheKey);
+  if (!storage || !storageKey) {
+    return false;
+  }
+
+  try {
+    const dataUrl = await blobToDataUrl(blob);
+    await storage.set({
+      [storageKey]: dataUrl,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function openPreviewCacheDatabase() {
   if (typeof indexedDB === "undefined") {
@@ -53,6 +133,11 @@ function openPreviewCacheDatabase() {
 }
 
 export async function readPreviewCacheBlob(cacheKey) {
+  const persistedBlob = await readPreviewCacheBlobFromStorage(cacheKey);
+  if (persistedBlob) {
+    return persistedBlob;
+  }
+
   const database = await openPreviewCacheDatabase();
   if (!database) {
     return null;
@@ -63,18 +148,29 @@ export async function readPreviewCacheBlob(cacheKey) {
     const store = transaction.objectStore(PREVIEW_CACHE_STORE_NAME);
     const request = store.get(cacheKey);
 
-    request.onsuccess = () => resolve(request.result instanceof Blob ? request.result : null);
+    request.onsuccess = async () => {
+      const blob = request.result instanceof Blob ? request.result : null;
+      if (blob) {
+        await writePreviewCacheBlobToStorage(cacheKey, blob).catch(() => {});
+      }
+      resolve(blob);
+    };
     request.onerror = () => reject(request.error);
   });
 }
 
 export async function writePreviewCacheBlob(cacheKey, blob) {
+  const persistentWriteSucceeded = await writePreviewCacheBlobToStorage(cacheKey, blob);
   const database = await openPreviewCacheDatabase();
   if (!database) {
-    return;
+    if (persistentWriteSucceeded) {
+      return;
+    }
+
+    throw new Error("Preview cache storage is unavailable.");
   }
 
-  return new Promise((resolve, reject) => {
+  await new Promise((resolve, reject) => {
     const transaction = database.transaction(PREVIEW_CACHE_STORE_NAME, "readwrite");
     const store = transaction.objectStore(PREVIEW_CACHE_STORE_NAME);
     const request = store.put(blob, cacheKey);

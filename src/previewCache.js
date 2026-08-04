@@ -25,8 +25,27 @@ function getBookmarkPreviewCacheKey(bookmarkId) {
   return bookmarkId ? `bookmark:${bookmarkId}` : "";
 }
 
+function getPagePreviewCacheKey(url) {
+  const normalizedUrl = normalizePreviewUrlInput(url);
+  return normalizedUrl ? `page:${normalizedUrl}` : "";
+}
+
 function getLegacyPreviewCacheKey(url) {
   return url ? getPreviewUrl(url) : "";
+}
+
+function getLegacyPreviewCacheKeys(url) {
+  if (!url) {
+    return [];
+  }
+
+  const trimmedUrl = url.trim();
+  const rawLegacyCacheKey = trimmedUrl
+    ? `https://image.thum.io/get/width/1200/crop/720/noanimate/${trimmedUrl}`
+    : "";
+  const normalizedLegacyCacheKey = getLegacyPreviewCacheKey(url);
+
+  return [...new Set([normalizedLegacyCacheKey, rawLegacyCacheKey].filter(Boolean))];
 }
 
 function getPersistentPreviewStorageKey(cacheKey) {
@@ -66,15 +85,34 @@ async function dataUrlToBlob(dataUrl) {
   }
 
   try {
-    const response = await fetch(dataUrl);
-    const blob = await response.blob();
-    return blob instanceof Blob ? blob : null;
+    const match = dataUrl.match(/^data:([^;,]+)?(?:;charset=[^;,]+)?(;base64)?,(.*)$/s);
+    if (!match) {
+      return null;
+    }
+
+    const mimeType = match[1] || "application/octet-stream";
+    const isBase64 = Boolean(match[2]);
+    const payload = match[3] || "";
+
+    if (isBase64) {
+      const normalizedPayload = payload.replace(/\s+/g, "");
+      const binary = atob(normalizedPayload);
+      const bytes = new Uint8Array(binary.length);
+
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+
+      return new Blob([bytes], { type: mimeType });
+    }
+
+    return new Blob([decodeURIComponent(payload)], { type: mimeType });
   } catch {
     return null;
   }
 }
 
-async function readPreviewCacheBlobFromStorage(cacheKey) {
+async function readPreviewCacheDataUrlFromStorage(cacheKey) {
   const storage = getChromeLocalStorage();
   const storageKey = getPersistentPreviewStorageKey(cacheKey);
   if (!storage || !storageKey) {
@@ -84,14 +122,14 @@ async function readPreviewCacheBlobFromStorage(cacheKey) {
   try {
     const result = await storage.get(storageKey);
     const dataUrl = result?.[storageKey];
-    if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/")) {
-      return null;
-    }
-
-    return dataUrlToBlob(dataUrl);
+    return typeof dataUrl === "string" && dataUrl.startsWith("data:image/") ? dataUrl : null;
   } catch {
     return null;
   }
+}
+
+async function readPreviewCacheBlobFromStorage(cacheKey) {
+  return dataUrlToBlob(await readPreviewCacheDataUrlFromStorage(cacheKey));
 }
 
 async function writePreviewCacheBlobToStorage(cacheKey, blob) {
@@ -185,7 +223,9 @@ async function writePreviewBlobForBookmark(bookmarkId, url, blob) {
     return false;
   }
 
-  const cacheKeys = [getBookmarkPreviewCacheKey(bookmarkId), getLegacyPreviewCacheKey(url)].filter(Boolean);
+  const cacheKeys = [getBookmarkPreviewCacheKey(bookmarkId), getPagePreviewCacheKey(url), ...getLegacyPreviewCacheKeys(url)].filter(
+    Boolean,
+  );
   if (!cacheKeys.length) {
     return false;
   }
@@ -201,9 +241,15 @@ export async function readCachedPreviewForBookmark(bookmarkId, url) {
 
 export async function readCachedPreviewRecordForBookmark(bookmarkId, url) {
   const bookmarkCacheKey = getBookmarkPreviewCacheKey(bookmarkId);
+  const pageCacheKey = getPagePreviewCacheKey(url);
+  const legacyCacheKeys = getLegacyPreviewCacheKeys(url);
+  const migrationKeys = [bookmarkCacheKey, pageCacheKey, ...legacyCacheKeys].filter(Boolean);
+
   if (bookmarkCacheKey) {
     const bookmarkBlob = await readPreviewCacheBlob(bookmarkCacheKey);
     if (bookmarkBlob) {
+      await Promise.all(migrationKeys.map((cacheKey) => writePreviewCacheBlob(cacheKey, bookmarkBlob).catch(() => {})));
+
       return {
         blob: bookmarkBlob,
         source: "bookmark",
@@ -211,24 +257,225 @@ export async function readCachedPreviewRecordForBookmark(bookmarkId, url) {
     }
   }
 
-  const legacyCacheKey = getLegacyPreviewCacheKey(url);
-  if (!legacyCacheKey) {
+  if (pageCacheKey) {
+    const pageBlob = await readPreviewCacheBlob(pageCacheKey);
+    if (pageBlob) {
+      await Promise.all(migrationKeys.map((cacheKey) => writePreviewCacheBlob(cacheKey, pageBlob).catch(() => {})));
+
+      return {
+        blob: pageBlob,
+        source: "page",
+      };
+    }
+  }
+
+  for (const legacyCacheKey of legacyCacheKeys) {
+    const legacyBlob = await readPreviewCacheBlob(legacyCacheKey);
+    if (!legacyBlob) {
+      continue;
+    }
+
+    await Promise.all(migrationKeys.map((cacheKey) => writePreviewCacheBlob(cacheKey, legacyBlob).catch(() => {})));
+
+    return {
+      blob: legacyBlob,
+      source: "legacy",
+    };
+  }
+
+  return null;
+}
+
+export async function readCachedPreviewSourceForBookmark(bookmarkId, url) {
+  const bookmarkCacheKey = getBookmarkPreviewCacheKey(bookmarkId);
+  const pageCacheKey = getPagePreviewCacheKey(url);
+  const legacyCacheKeys = getLegacyPreviewCacheKeys(url);
+  const migrationKeys = [bookmarkCacheKey, pageCacheKey, ...legacyCacheKeys].filter(Boolean);
+
+  if (bookmarkCacheKey) {
+    const bookmarkDataUrl = await readPreviewCacheDataUrlFromStorage(bookmarkCacheKey);
+    if (bookmarkDataUrl) {
+      await Promise.all(
+        migrationKeys.map((cacheKey) =>
+          getChromeLocalStorage()?.set({
+            [getPersistentPreviewStorageKey(cacheKey)]: bookmarkDataUrl,
+          }).catch(() => {}),
+        ),
+      );
+
+      return {
+        source: "bookmark",
+        url: bookmarkDataUrl,
+      };
+    }
+  }
+
+  if (pageCacheKey) {
+    const pageDataUrl = await readPreviewCacheDataUrlFromStorage(pageCacheKey);
+    if (pageDataUrl) {
+      await Promise.all(
+        migrationKeys.map((cacheKey) =>
+          getChromeLocalStorage()?.set({
+            [getPersistentPreviewStorageKey(cacheKey)]: pageDataUrl,
+          }).catch(() => {}),
+        ),
+      );
+
+      return {
+        source: "page",
+        url: pageDataUrl,
+      };
+    }
+  }
+
+  for (const legacyCacheKey of legacyCacheKeys) {
+    const legacyDataUrl = await readPreviewCacheDataUrlFromStorage(legacyCacheKey);
+    if (legacyDataUrl) {
+      await Promise.all(
+        migrationKeys.map((cacheKey) =>
+          getChromeLocalStorage()?.set({
+            [getPersistentPreviewStorageKey(cacheKey)]: legacyDataUrl,
+          }).catch(() => {}),
+        ),
+      );
+
+      return {
+        source: "legacy",
+        url: legacyDataUrl,
+      };
+    }
+  }
+
+  const previewRecord = await readCachedPreviewRecordForBookmark(bookmarkId, url);
+  if (!previewRecord?.blob) {
     return null;
   }
 
-  const legacyBlob = await readPreviewCacheBlob(legacyCacheKey);
-  if (legacyBlob && bookmarkCacheKey) {
-    await writePreviewCacheBlob(bookmarkCacheKey, legacyBlob).catch(() => {});
-  }
-
-  if (!legacyBlob) {
+  try {
+    return {
+      source: previewRecord.source,
+      url: await blobToDataUrl(previewRecord.blob),
+    };
+  } catch {
     return null;
   }
+}
 
-  return {
-    blob: legacyBlob,
-    source: "legacy",
-  };
+export async function readCachedPreviewSourcesForBookmarks(entries) {
+  if (!Array.isArray(entries) || !entries.length) {
+    return {};
+  }
+
+  const storage = getChromeLocalStorage();
+  const bookmarkEntries = entries.map((entry) => {
+    const bookmarkCacheKey = getBookmarkPreviewCacheKey(entry.bookmarkId);
+    const pageCacheKey = getPagePreviewCacheKey(entry.url);
+    const legacyCacheKeys = getLegacyPreviewCacheKeys(entry.url);
+    const candidates = [
+      bookmarkCacheKey ? { cacheKey: bookmarkCacheKey, source: "bookmark" } : null,
+      pageCacheKey ? { cacheKey: pageCacheKey, source: "page" } : null,
+      ...legacyCacheKeys.map((cacheKey) => ({ cacheKey, source: "legacy" })),
+    ].filter(Boolean);
+
+    return {
+      cacheKey: entry.cacheKey,
+      candidates,
+      migrationKeys: [...new Set(candidates.map((candidate) => candidate.cacheKey))],
+    };
+  });
+
+  if (!storage) {
+    const fallbackResults = await Promise.all(
+      entries.map(async (entry) => {
+        const result = await readCachedPreviewSourceForBookmark(entry.bookmarkId, entry.url);
+        return [entry.cacheKey, result];
+      }),
+    );
+
+    return Object.fromEntries(fallbackResults.filter(([, value]) => value));
+  }
+
+  const storageKeys = [...new Set(
+    bookmarkEntries.flatMap((entry) =>
+      entry.candidates.map((candidate) => getPersistentPreviewStorageKey(candidate.cacheKey)).filter(Boolean),
+    ),
+  )];
+
+  let storageResult = {};
+  try {
+    storageResult = storageKeys.length ? await storage.get(storageKeys) : {};
+  } catch {
+    storageResult = {};
+  }
+
+  const results = {};
+  const missingEntries = [];
+
+  for (const entry of bookmarkEntries) {
+    let matchedResult = null;
+
+    for (const candidate of entry.candidates) {
+      const storageKey = getPersistentPreviewStorageKey(candidate.cacheKey);
+      const dataUrl = storageKey ? storageResult?.[storageKey] : null;
+      if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/")) {
+        continue;
+      }
+
+      matchedResult = {
+        source: candidate.source,
+        url: dataUrl,
+      };
+
+      const missingMigrationKeys = entry.migrationKeys.filter((cacheKey) => {
+        const currentStorageKey = getPersistentPreviewStorageKey(cacheKey);
+        return currentStorageKey && typeof storageResult?.[currentStorageKey] !== "string";
+      });
+
+      if (missingMigrationKeys.length) {
+        await Promise.all(
+          missingMigrationKeys.map((cacheKey) =>
+            storage
+              .set({
+                [getPersistentPreviewStorageKey(cacheKey)]: dataUrl,
+              })
+              .catch(() => {}),
+          ),
+        );
+      }
+
+      break;
+    }
+
+    if (matchedResult) {
+      results[entry.cacheKey] = matchedResult;
+    } else {
+      missingEntries.push(entry);
+    }
+  }
+
+  if (!missingEntries.length) {
+    return results;
+  }
+
+  const fallbackResults = await Promise.all(
+    missingEntries.map(async (entry) => {
+      const originalEntry = entries.find((candidate) => candidate.cacheKey === entry.cacheKey);
+      if (!originalEntry) {
+        return [entry.cacheKey, null];
+      }
+
+      const result = await readCachedPreviewSourceForBookmark(originalEntry.bookmarkId, originalEntry.url);
+      return [entry.cacheKey, result];
+    }),
+  );
+
+  for (const [cacheKey, result] of fallbackResults) {
+    if (result) {
+      results[cacheKey] = result;
+    }
+  }
+
+  return results;
 }
 
 export async function cacheCapturedPreview(bookmarkId, url, dataUrl) {
@@ -236,8 +483,10 @@ export async function cacheCapturedPreview(bookmarkId, url, dataUrl) {
     return false;
   }
 
-  const response = await fetch(dataUrl);
-  const blob = await response.blob();
+  const blob = await dataUrlToBlob(dataUrl);
+  if (!blob) {
+    return false;
+  }
 
   return writePreviewBlobForBookmark(bookmarkId, url, blob);
 }

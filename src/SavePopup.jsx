@@ -386,7 +386,7 @@ export default function SavePopup() {
         });
 
         if (!tab?.url || !isBookmarkableUrl(tab.url)) {
-          throw new Error("The current tab cannot be bookmarked from this popup.");
+          throw new Error("Can't bookmark this page\nSystem pages and extension pages can't be saved as bookmarks.");
         }
 
         const [tree, storedFolderId] = await Promise.all([
@@ -690,10 +690,17 @@ export default function SavePopup() {
   }
 
   if (error) {
+    const [errorTitle, ...errorLines] = error.split("\n");
+
     return (
       <main className="save-popup-shell">
       <section className="save-popup-card" ref={popupCardRef}>
-          <p className="save-popup-error">{error}</p>
+          <div className="save-popup-error">
+            <strong>{errorTitle}</strong>
+            {errorLines.map((line) => (
+              <p key={line}>{line}</p>
+            ))}
+          </div>
           <button type="button" className="save-popup-primary-button" onClick={handleOpenGridmarks}>
             Open Gridmarks
           </button>

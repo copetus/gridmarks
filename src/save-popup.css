@@ -317,5 +317,12 @@ body {
 }
 
 .save-popup-error {
+  display: grid;
+  gap: 6px;
   color: #a33232;
+}
+
+.save-popup-error strong,
+.save-popup-error p {
+  margin: 0;
 }

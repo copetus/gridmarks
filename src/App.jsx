@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getPreviewUrl, readCachedPreviewRecordForBookmark, writePreviewCacheBlob } from "./previewCache";
+import { getPreviewUrl, readCachedPreviewRecordForBookmark, readCachedPreviewSourcesForBookmarks, writePreviewCacheBlob } from "./previewCache";
 
 const FALLBACK_TREE = [
   {
@@ -840,6 +840,7 @@ function App() {
   const [dragItemMetrics, setDragItemMetrics] = useState(null);
   const [isHeaderElevated, setIsHeaderElevated] = useState(false);
   const [cachedPreviewUrls, setCachedPreviewUrls] = useState({});
+  const [resolvedPreviewCacheKeys, setResolvedPreviewCacheKeys] = useState({});
   const [isCompactSidebar, setIsCompactSidebar] = useState(() =>
     typeof window === "undefined" ? false : window.matchMedia("(max-width: 700px)").matches,
   );
@@ -1360,22 +1361,60 @@ function App() {
     let cancelled = false;
 
     const loadCachedPreviews = async () => {
-      for (const { bookmarkId, cacheKey, url } of visiblePreviewItems) {
-        if (cachedPreviewUrls[cacheKey] || previewCacheLookupRef.current.has(cacheKey)) {
-          continue;
+      const pendingItems = visiblePreviewItems.filter(
+        ({ cacheKey }) => !cachedPreviewUrls[cacheKey] && !previewCacheLookupRef.current.has(cacheKey),
+      );
+
+      if (!pendingItems.length) {
+        return;
+      }
+
+      for (const { cacheKey } of pendingItems) {
+        previewCacheLookupRef.current.add(cacheKey);
+      }
+
+      try {
+        const previewSources = await readCachedPreviewSourcesForBookmarks(pendingItems);
+        if (cancelled) {
+          return;
         }
 
-        previewCacheLookupRef.current.add(cacheKey);
-
-        try {
-          const previewRecord = await readCachedPreviewRecordForBookmark(bookmarkId, url);
-          if (!cancelled && previewRecord) {
-            setCachedPreviewBlob(cacheKey, previewRecord.blob, previewRecord.source);
+        for (const { cacheKey, bookmarkId, url } of pendingItems) {
+          const previewSource = previewSources[cacheKey];
+          if (previewSource?.url) {
+            setCachedPreviewSource(cacheKey, previewSource.url, previewSource.source);
+            continue;
           }
-        } catch {
-          // Ignore preview cache read failures and fall back to the live thumbnail service.
-        } finally {
-          previewCacheLookupRef.current.delete(cacheKey);
+
+          try {
+            const previewRecord = await readCachedPreviewRecordForBookmark(bookmarkId, url);
+            if (!cancelled && previewRecord?.blob) {
+              setCachedPreviewBlob(cacheKey, previewRecord.blob, previewRecord.source);
+            }
+          } catch {
+            // Ignore preview cache read failures and fall back to the live thumbnail service.
+          }
+        }
+      } finally {
+        if (!cancelled) {
+          setResolvedPreviewCacheKeys((current) => {
+            const next = { ...current };
+            let changed = false;
+
+            for (const { cacheKey } of pendingItems) {
+              previewCacheLookupRef.current.delete(cacheKey);
+              if (!next[cacheKey]) {
+                next[cacheKey] = true;
+                changed = true;
+              }
+            }
+
+            return changed ? next : current;
+          });
+        } else {
+          for (const { cacheKey } of pendingItems) {
+            previewCacheLookupRef.current.delete(cacheKey);
+          }
         }
       }
     };
@@ -1446,6 +1485,47 @@ function App() {
     });
   };
 
+  const setCachedPreviewSource = (cacheKey, url, source) => {
+    const existingObjectUrl = previewObjectUrlsRef.current.get(cacheKey);
+    if (existingObjectUrl) {
+      URL.revokeObjectURL(existingObjectUrl);
+      previewObjectUrlsRef.current.delete(cacheKey);
+    }
+
+    setCachedPreviewUrls((current) => {
+      const currentEntry = current[cacheKey];
+      if (currentEntry?.url === url && currentEntry?.source === source) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [cacheKey]: {
+          source,
+          url,
+        },
+      };
+    });
+  };
+
+  const removeCachedPreview = (cacheKey) => {
+    const existingObjectUrl = previewObjectUrlsRef.current.get(cacheKey);
+    if (existingObjectUrl) {
+      URL.revokeObjectURL(existingObjectUrl);
+      previewObjectUrlsRef.current.delete(cacheKey);
+    }
+
+    setCachedPreviewUrls((current) => {
+      if (!current[cacheKey]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[cacheKey];
+      return next;
+    });
+  };
+
   const cachePreviewImage = async (cacheKey) => {
     if (!previewGenerationAllowed) {
       return;
@@ -1497,6 +1577,14 @@ function App() {
     if (!isCachedPreview) {
       void cachePreviewImage(cacheKey);
     }
+  };
+
+  const handlePreviewImageError = (bookmarkId, cacheKey, isCachedPreview) => {
+    if (isCachedPreview) {
+      removeCachedPreview(cacheKey);
+    }
+
+    markPreviewFailed(bookmarkId);
   };
 
   useEffect(() => {
@@ -2222,6 +2310,29 @@ function App() {
     showToastMessage(getDeletionToastLabel(node), {
       type: "history",
     });
+  };
+
+  const copyBookmarkLinkAddress = async (node) => {
+    const url = node?.url?.trim();
+    if (!url) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(url);
+      setActiveMenuId(null);
+      setSidebarContextMenu(null);
+      setCardMenuPosition(null);
+      setStatusMessage("Link address copied");
+    } catch {
+      setStatusMessage("Unable to copy link address");
+    }
+  };
+
+  const closeActionMenus = () => {
+    setActiveMenuId(null);
+    setSidebarContextMenu(null);
+    setCardMenuPosition(null);
   };
 
   const deleteSelectedItems = async () => {
@@ -3141,6 +3252,19 @@ function App() {
       <div
         className={className}
         style={style}
+        onClickCapture={(event) => {
+          const target = event.target;
+          if (!(target instanceof Element)) {
+            return;
+          }
+
+          const menuItem = target.closest(".bookmark-menu-item");
+          if (!(menuItem instanceof HTMLButtonElement) || menuItem.disabled) {
+            return;
+          }
+
+          closeActionMenus();
+        }}
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -3216,6 +3340,19 @@ function App() {
       <div
         className={className}
         style={style}
+        onClickCapture={(event) => {
+          const target = event.target;
+          if (!(target instanceof Element)) {
+            return;
+          }
+
+          const menuItem = target.closest(".bookmark-menu-item");
+          if (!(menuItem instanceof HTMLButtonElement) || menuItem.disabled) {
+            return;
+          }
+
+          closeActionMenus();
+        }}
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -3233,6 +3370,9 @@ function App() {
         </button>
         <button type="button" className="bookmark-menu-item" onClick={() => copyNode(item, "copy")}>
           {renderMenuLabel("Copy", "⌘C")}
+        </button>
+        <button type="button" className="bookmark-menu-item" onClick={() => copyBookmarkLinkAddress(item)}>
+          {renderMenuLabel("Copy link address")}
         </button>
         <button
           type="button"
@@ -3576,23 +3716,25 @@ function App() {
                     const previewCacheKey = getPreviewUrl(item.url || "");
                     const cachedPreviewEntry = cachedPreviewUrls[previewCacheKey];
                     const cachedPreviewSource = cachedPreviewEntry?.url || "";
-                    const previewSource = cachedPreviewSource || (previewGenerationAllowed ? previewCacheKey : "");
+                    const previewCacheResolved = Boolean(resolvedPreviewCacheKeys[previewCacheKey] || cachedPreviewSource);
+                    const allowLivePreview = previewGenerationAllowed && previewCacheResolved && !cachedPreviewSource;
+                    const previewSource = cachedPreviewSource || (allowLivePreview ? previewCacheKey : "");
                     const isCachedPreview = Boolean(cachedPreviewSource);
-                    const showPreviewImage = Boolean(previewSource) && !previewFailed;
-                    const showPreviewFallback = previewFailed || !previewSource;
+                    const showPreviewImage = Boolean(previewSource) && (!previewFailed || isCachedPreview);
+                    const showPreviewFallback = (previewFailed && !isCachedPreview) || (previewCacheResolved && !previewSource);
 
                     return (
                       <div className="bookmark-preview" style={{ "--preview-accent": themeColor }}>
                         {showPreviewImage && (
-                          <img
-                            className="bookmark-preview-image"
-                            src={previewSource}
-                            alt=""
-                            loading="lazy"
-                            crossOrigin="anonymous"
-                            onLoad={(event) => handlePreviewImageLoad(item.id, event.currentTarget, previewCacheKey, isCachedPreview)}
-                            onError={() => markPreviewFailed(item.id)}
-                          />
+                        <img
+                          className="bookmark-preview-image"
+                          src={previewSource}
+                          alt=""
+                          loading="lazy"
+                          crossOrigin={isCachedPreview ? undefined : "anonymous"}
+                          onLoad={(event) => handlePreviewImageLoad(item.id, event.currentTarget, previewCacheKey, isCachedPreview)}
+                          onError={() => handlePreviewImageError(item.id, previewCacheKey, isCachedPreview)}
+                        />
                         )}
                         <div className={`bookmark-preview-fallback ${showPreviewFallback ? "is-visible" : ""}`}>
                           <span>{fallbackDomain}</span>

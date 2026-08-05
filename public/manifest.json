@@ -30,6 +30,13 @@
         "default": "Alt+D",
         "mac": "Option+D"
       }
+    },
+    "collapse_all_folders": {
+      "description": "Collapse all expanded folders in Gridmarks",
+      "suggested_key": {
+        "default": "Alt+L",
+        "mac": "Option+L"
+      }
     }
   }
 }

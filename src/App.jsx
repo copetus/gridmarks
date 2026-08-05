@@ -8,39 +8,145 @@ const FALLBACK_TREE = [
     children: [
       {
         id: "11",
-        title: "Functional",
+        title: "Product Studio",
         children: [
           {
             id: "111",
-            title: "Tools / Resources",
+            title: "Brand",
             children: [
-              { id: "1111", title: "Chrome Extensions", url: "https://developer.chrome.com/docs/extensions/" },
-              { id: "1112", title: "MDN Web Docs", url: "https://developer.mozilla.org/" },
+              { id: "1111", title: "Gridmarks landing page inspiration", url: "https://stripe.com/" },
+              { id: "1112", title: "Motion references", url: "https://www.apple.com/" },
+              { id: "1113", title: "Icon direction", url: "https://fonts.google.com/icons" },
             ],
           },
           {
             id: "112",
-            title: "Inspiration",
+            title: "Research",
             children: [
-              { id: "1121", title: "Material 3", url: "https://m3.material.io/" },
-              { id: "1122", title: "Google Design", url: "https://design.google/" },
+              {
+                id: "1121",
+                title: "Competitive audit",
+                children: [
+                  { id: "11211", title: "Opera Bookmarks", url: "https://www.opera.com/" },
+                  { id: "11212", title: "Chrome Bookmarks Manager", url: "https://support.google.com/chrome/answer/188842" },
+                  { id: "11213", title: "Arc browser references", url: "https://arc.net/" },
+                ],
+              },
+              {
+                id: "1122",
+                title: "UX notes",
+                children: [
+                  { id: "11221", title: "Material 3", url: "https://m3.material.io/" },
+                  { id: "11222", title: "Google Design", url: "https://design.google/" },
+                  { id: "11223", title: "Writing for interfaces", url: "https://www.nngroup.com/articles/microcopy/" },
+                ],
+              },
             ],
           },
           {
             id: "113",
-            title: "References",
+            title: "Build",
             children: [
-              { id: "1131", title: "Bookmarks API", url: "https://developer.chrome.com/docs/extensions/reference/api/bookmarks" },
+              {
+                id: "1131",
+                title: "Extension docs",
+                children: [
+                  { id: "11311", title: "Chrome Extensions", url: "https://developer.chrome.com/docs/extensions/" },
+                  { id: "11312", title: "Bookmarks API", url: "https://developer.chrome.com/docs/extensions/reference/api/bookmarks" },
+                  { id: "11313", title: "Storage API", url: "https://developer.chrome.com/docs/extensions/reference/api/storage" },
+                ],
+              },
+              {
+                id: "1132",
+                title: "Frontend",
+                children: [
+                  { id: "11321", title: "MDN Web Docs", url: "https://developer.mozilla.org/" },
+                  { id: "11322", title: "React docs", url: "https://react.dev/" },
+                  { id: "11323", title: "Vite guide", url: "https://vite.dev/guide/" },
+                ],
+              },
+              {
+                id: "1133",
+                title: "Launch",
+                children: [
+                  { id: "11331", title: "Chrome Web Store", url: "https://chromewebstore.google.com/" },
+                  { id: "11332", title: "GitHub releases", url: "https://github.com/" },
+                ],
+              },
             ],
           },
         ],
       },
       {
         id: "12",
-        title: "Reading List",
+        title: "Creative Library",
         children: [
-          { id: "121", title: "OpenAI", url: "https://openai.com/" },
-          { id: "122", title: "YouTube", url: "https://youtube.com/" },
+          {
+            id: "121",
+            title: "Typography",
+            children: [
+              { id: "1211", title: "ABC Dinamo", url: "https://abcdinamo.com/" },
+              { id: "1212", title: "Klim Type Foundry", url: "https://klim.co.nz/" },
+              { id: "1213", title: "Swiss Typefaces", url: "https://www.swisstypefaces.com/" },
+            ],
+          },
+          {
+            id: "122",
+            title: "Inspiration",
+            children: [
+              { id: "1221", title: "Awwwards", url: "https://www.awwwards.com/" },
+              { id: "1222", title: "Godly", url: "https://godly.website/" },
+              { id: "1223", title: "SiteInspire", url: "https://www.siteinspire.com/" },
+            ],
+          },
+          {
+            id: "123",
+            title: "Assets",
+            children: [
+              { id: "1231", title: "Relume Icons", url: "https://icons.relume.io/" },
+              { id: "1232", title: "IcoMoon", url: "https://icomoon.io/" },
+              { id: "1233", title: "Figma community", url: "https://www.figma.com/community" },
+            ],
+          },
+          {
+            id: "124",
+            title: "Watch later",
+            children: [
+              { id: "1241", title: "OpenAI", url: "https://openai.com/" },
+              { id: "1242", title: "YouTube", url: "https://youtube.com/" },
+              { id: "1243", title: "Linear", url: "https://linear.app/" },
+              { id: "1244", title: "Figma", url: "https://www.figma.com/" },
+              { id: "1245", title: "Notion", url: "https://www.notion.so/" },
+              { id: "1246", title: "Framer", url: "https://www.framer.com/" },
+              { id: "1247", title: "Webflow", url: "https://webflow.com/" },
+              { id: "1248", title: "Vercel", url: "https://vercel.com/" },
+              { id: "1249", title: "GitHub", url: "https://github.com/" },
+              { id: "12410", title: "Dribbble", url: "https://dribbble.com/" },
+            ],
+          },
+        ],
+      },
+      {
+        id: "13",
+        title: "Client Work",
+        children: [
+          {
+            id: "131",
+            title: "Northstar",
+            children: [
+              { id: "1311", title: "Client portal", url: "https://notion.so/" },
+              { id: "1312", title: "Roadmap", url: "https://linear.app/" },
+              { id: "1313", title: "Design review", url: "https://figma.com/" },
+            ],
+          },
+          {
+            id: "132",
+            title: "Aster",
+            children: [
+              { id: "1321", title: "Sprint board", url: "https://trello.com/" },
+              { id: "1322", title: "Reference deck", url: "https://docs.google.com/presentation/" },
+            ],
+          },
         ],
       },
     ],
@@ -48,7 +154,25 @@ const FALLBACK_TREE = [
   {
     id: "2",
     title: "Other Bookmarks",
-    children: [{ id: "21", title: "Shopping list", url: "https://shopping.google.com/" }],
+    children: [
+      {
+        id: "21",
+        title: "Personal",
+        children: [
+          { id: "211", title: "Travel ideas", url: "https://www.airbnb.com/" },
+          { id: "212", title: "Wishlist", url: "https://www.nike.com/" },
+          { id: "213", title: "Reading queue", url: "https://longform.org/" },
+        ],
+      },
+      {
+        id: "22",
+        title: "Archive",
+        children: [
+          { id: "221", title: "Old references", url: "https://web.archive.org/" },
+          { id: "222", title: "Saved research", url: "https://drive.google.com/" },
+        ],
+      },
+    ],
   },
 ];
 
@@ -1276,6 +1400,27 @@ function App() {
 
     return () => window.clearTimeout(timeoutId);
   }, [toastState]);
+
+  useEffect(() => {
+    if (!globalThis.chrome?.runtime?.onMessage) {
+      return undefined;
+    }
+
+    const handleRuntimeMessage = (message, _sender, sendResponse) => {
+      if (message?.type !== "collapse-all-folders") {
+        return undefined;
+      }
+
+      collapseAllFolders();
+      sendResponse?.({ ok: true });
+      return true;
+    };
+
+    chrome.runtime.onMessage.addListener(handleRuntimeMessage);
+    return () => {
+      chrome.runtime.onMessage.removeListener(handleRuntimeMessage);
+    };
+  }, []);
 
   const rootFolders = useMemo(() => getVisibleRootFolders(tree), [tree]);
   const selectedFolder = useMemo(() => findNodeById(rootFolders, selectedFolderId) ?? rootFolders[0] ?? null, [rootFolders, selectedFolderId]);
@@ -2627,7 +2772,7 @@ function App() {
 
       if (event.altKey && !event.metaKey && !event.ctrlKey && !isTypingTarget && event.key.toLowerCase() === "l") {
         event.preventDefault();
-        setExpandedFolders(new Set());
+        collapseAllFolders();
         return;
       }
 
@@ -2914,6 +3059,11 @@ function App() {
 
   const showToastMessage = (message, undo = null) => {
     setToastState({ message, undo });
+  };
+
+  const collapseAllFolders = () => {
+    setExpandedFolders(new Set());
+    showToastMessage("Folders collapsed");
   };
 
   const handleToastUndo = async () => {

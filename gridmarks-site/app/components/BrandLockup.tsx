@@ -6,6 +6,9 @@ type BrandLockupProps = {
   autoRevealed?: boolean;
 };
 
+const extensionUrl =
+  "https://chromewebstore.google.com/detail/hdblccojfaagedcigakildnnclmimgek?utm_source=item-share-cb";
+
 export function BrandLockup({ autoRevealed = false }: BrandLockupProps) {
   const [isHovered, setIsHovered] = useState(false);
   const [hasInteracted, setHasInteracted] = useState(false);
@@ -15,7 +18,7 @@ export function BrandLockup({ autoRevealed = false }: BrandLockupProps) {
       className={`brand-lockup ${isHovered || autoRevealed ? "is-hovered" : ""} ${
         hasInteracted ? "has-interacted" : ""
       }`}
-      href="https://github.com/copetus/gridmarks"
+      href={extensionUrl}
       target="_blank"
       rel="noreferrer"
       onMouseEnter={() => {

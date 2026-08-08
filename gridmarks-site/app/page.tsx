@@ -83,6 +83,8 @@ const features = [
 ];
 
 const featurePreviewEnabled = false;
+const extensionUrl =
+  "https://chromewebstore.google.com/detail/hdblccojfaagedcigakildnnclmimgek?utm_source=item-share-cb";
 
 export default function Home() {
   const heroCtaRef = useRef<HTMLAnchorElement | null>(null);
@@ -247,7 +249,7 @@ export default function Home() {
         <div className="hero-actions">
           <a
             className="button button-solid"
-            href="https://github.com/copetus/gridmarks"
+            href={extensionUrl}
             target="_blank"
             rel="noreferrer"
             ref={heroCtaRef}

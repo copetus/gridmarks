@@ -369,6 +369,18 @@ a {
   overflow: hidden;
 }
 
+.brand-lockup-cta-chrome {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.brand-lockup-cta-chrome img {
+  width: 24px;
+  height: 24px;
+}
+
 .brand-lockup-cta-label {
   display: inline-flex;
   align-items: center;
@@ -528,6 +540,19 @@ a {
   order: 1;
   display: inline-flex;
   white-space: nowrap;
+}
+
+.button-leading-icon {
+  order: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.button-leading-icon img {
+  width: 24px;
+  height: 24px;
 }
 
 .button-icon {

@@ -254,6 +254,9 @@ export default function Home() {
             rel="noreferrer"
             ref={heroCtaRef}
           >
+            <span className="button-leading-icon" aria-hidden="true">
+              <img src="/chrome-logo.svg" alt="" />
+            </span>
             <span className="button-label">Get the extension</span>
             <span className="button-icon" aria-hidden="true">
               <svg focusable="false" viewBox="0 0 24 24">

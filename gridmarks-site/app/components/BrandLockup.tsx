@@ -45,6 +45,9 @@ export function BrandLockup({ autoRevealed = false }: BrandLockupProps) {
         </div>
       </div>
       <span className="brand-lockup-cta">
+        <span className="brand-lockup-cta-chrome" aria-hidden="true">
+          <img src="/chrome-logo.svg" alt="" />
+        </span>
         <span className="brand-lockup-cta-label">Get the extension</span>
         <span className="brand-lockup-cta-icon" aria-hidden="true">
           <svg focusable="false" viewBox="0 0 24 24">

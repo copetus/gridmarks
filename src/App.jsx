@@ -331,7 +331,7 @@ function getInitialSelectedFolderId() {
     return folderId;
   }
 
-  return window.localStorage.getItem("gridmarks-selected-folder-id") || "1";
+  return window.localStorage.getItem(STORAGE_KEYS.selectedFolderId) || "1";
 }
 
 function getInitialTargetBookmarkId() {
@@ -347,7 +347,7 @@ function getInitialViewMode() {
     return "list";
   }
 
-  return window.localStorage.getItem("gridmarks-view-mode") || "list";
+  return window.localStorage.getItem(STORAGE_KEYS.viewMode) || "list";
 }
 
 function getInitialPreviewConsentStatus() {
@@ -355,7 +355,7 @@ function getInitialPreviewConsentStatus() {
     return "unknown";
   }
 
-  return window.localStorage.getItem("gridmarks-preview-consent-status") || "unknown";
+  return window.localStorage.getItem(STORAGE_KEYS.previewConsentStatus) || "unknown";
 }
 
 function getInitialPreviewGenerationEnabled() {
@@ -363,10 +363,25 @@ function getInitialPreviewGenerationEnabled() {
     return false;
   }
 
-  return window.localStorage.getItem("gridmarks-preview-generation-enabled") === "true";
+  return window.localStorage.getItem(STORAGE_KEYS.previewGenerationEnabled) === "true";
 }
 
 const PRIVACY_POLICY_URL = "https://gridmarks-extension.salomono.chatgpt.site/privacy";
+const STORAGE_KEYS = {
+  selectedFolderId: "gridmarks-selected-folder-id",
+  viewMode: "gridmarks-view-mode",
+  previewConsentStatus: "gridmarks-preview-consent-status",
+  previewGenerationEnabled: "gridmarks-preview-generation-enabled",
+  folderIconVariant: "gridmarks-folder-icon-variant",
+};
+
+function getExtensionStorage() {
+  if (!globalThis.chrome?.storage?.local) {
+    return null;
+  }
+
+  return chrome.storage.local;
+}
 
 function getDeletionToastLabel(node) {
   const fallbackLabel = isFolder(node) ? "Folder" : "Bookmark";
@@ -441,6 +456,43 @@ function isLikelyBlockedPreviewImage(image) {
     return brightRatio >= 0.82 && mutedRatio >= 0.88 && darkRatio >= 0.01 && darkRatio <= 0.18 && edgeBrightRatio >= 0.94;
   } catch {
     return false;
+  }
+}
+
+async function writeTextToClipboard(value) {
+  const text = typeof value === "string" ? value : "";
+  if (!text) {
+    return false;
+  }
+
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Fall through to legacy copy path.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+  textarea.style.top = "0";
+  textarea.style.left = "0";
+
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    textarea.remove();
   }
 }
 
@@ -942,17 +994,17 @@ function App() {
       return "filled";
     }
 
-    return window.localStorage.getItem("gridmarks-folder-icon-variant") || "filled";
+    return window.localStorage.getItem(STORAGE_KEYS.folderIconVariant) || "filled";
   });
   const [settingsDraft, setSettingsDraft] = useState(() => ({
     previewGenerationEnabled:
       typeof window === "undefined"
         ? false
-        : window.localStorage.getItem("gridmarks-preview-generation-enabled") === "true",
+        : window.localStorage.getItem(STORAGE_KEYS.previewGenerationEnabled) === "true",
     folderIconVariant:
       typeof window === "undefined"
         ? "filled"
-        : window.localStorage.getItem("gridmarks-folder-icon-variant") || "filled",
+        : window.localStorage.getItem(STORAGE_KEYS.folderIconVariant) || "filled",
   }));
   const [selectedItemIds, setSelectedItemIds] = useState([]);
   const [selectionAnchorId, setSelectionAnchorId] = useState(null);
@@ -1366,19 +1418,31 @@ function App() {
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem("gridmarks-folder-icon-variant", folderIconVariant);
+    window.localStorage.setItem(STORAGE_KEYS.folderIconVariant, folderIconVariant);
+    getExtensionStorage()?.set({
+      [STORAGE_KEYS.folderIconVariant]: folderIconVariant,
+    }).catch(() => {});
   }, [folderIconVariant]);
 
   useEffect(() => {
-    window.localStorage.setItem("gridmarks-view-mode", viewMode);
+    window.localStorage.setItem(STORAGE_KEYS.viewMode, viewMode);
+    getExtensionStorage()?.set({
+      [STORAGE_KEYS.viewMode]: viewMode,
+    }).catch(() => {});
   }, [viewMode]);
 
   useEffect(() => {
-    window.localStorage.setItem("gridmarks-preview-consent-status", previewConsentStatus);
+    window.localStorage.setItem(STORAGE_KEYS.previewConsentStatus, previewConsentStatus);
+    getExtensionStorage()?.set({
+      [STORAGE_KEYS.previewConsentStatus]: previewConsentStatus,
+    }).catch(() => {});
   }, [previewConsentStatus]);
 
   useEffect(() => {
-    window.localStorage.setItem("gridmarks-preview-generation-enabled", String(previewGenerationEnabled));
+    window.localStorage.setItem(STORAGE_KEYS.previewGenerationEnabled, String(previewGenerationEnabled));
+    getExtensionStorage()?.set({
+      [STORAGE_KEYS.previewGenerationEnabled]: previewGenerationEnabled,
+    }).catch(() => {});
   }, [previewGenerationEnabled]);
 
   useEffect(() => {
@@ -1386,8 +1450,76 @@ function App() {
       return;
     }
 
-    window.localStorage.setItem("gridmarks-selected-folder-id", selectedFolderId);
+    window.localStorage.setItem(STORAGE_KEYS.selectedFolderId, selectedFolderId);
+    getExtensionStorage()?.set({
+      [STORAGE_KEYS.selectedFolderId]: selectedFolderId,
+    }).catch(() => {});
   }, [selectedFolderId]);
+
+  useEffect(() => {
+    const storage = getExtensionStorage();
+    if (!storage) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    storage
+      .get([
+        STORAGE_KEYS.selectedFolderId,
+        STORAGE_KEYS.viewMode,
+        STORAGE_KEYS.previewConsentStatus,
+        STORAGE_KEYS.previewGenerationEnabled,
+        STORAGE_KEYS.folderIconVariant,
+      ])
+      .then((result) => {
+        if (cancelled) {
+          return;
+        }
+
+        const storedSelectedFolderId = result?.[STORAGE_KEYS.selectedFolderId];
+        const storedViewMode = result?.[STORAGE_KEYS.viewMode];
+        const storedPreviewConsentStatus = result?.[STORAGE_KEYS.previewConsentStatus];
+        const storedPreviewGenerationEnabled = result?.[STORAGE_KEYS.previewGenerationEnabled];
+        const storedFolderIconVariant = result?.[STORAGE_KEYS.folderIconVariant];
+
+        if (typeof storedSelectedFolderId === "string" && storedSelectedFolderId) {
+          setSelectedFolderId(storedSelectedFolderId);
+        }
+
+        if (storedViewMode === "grid" || storedViewMode === "list") {
+          setViewMode(storedViewMode);
+        }
+
+        if (typeof storedPreviewConsentStatus === "string" && storedPreviewConsentStatus) {
+          setPreviewConsentStatus(storedPreviewConsentStatus);
+        }
+
+        if (typeof storedPreviewGenerationEnabled === "boolean") {
+          setPreviewGenerationEnabled(storedPreviewGenerationEnabled);
+        }
+
+        if (storedFolderIconVariant === "filled" || storedFolderIconVariant === "outlined") {
+          setFolderIconVariant(storedFolderIconVariant);
+          setSettingsDraft((current) => ({
+            ...current,
+            folderIconVariant: storedFolderIconVariant,
+          }));
+        }
+
+        if (typeof storedPreviewGenerationEnabled === "boolean") {
+          setSettingsDraft((current) => ({
+            ...current,
+            previewGenerationEnabled: storedPreviewGenerationEnabled,
+          }));
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!toastState) {
@@ -2463,15 +2595,17 @@ function App() {
       return;
     }
 
-    try {
-      await navigator.clipboard.writeText(url);
+    const copied = await writeTextToClipboard(url);
+    if (copied) {
       setActiveMenuId(null);
       setSidebarContextMenu(null);
       setCardMenuPosition(null);
       setStatusMessage("Link address copied");
-    } catch {
-      setStatusMessage("Unable to copy link address");
+      showToastMessage("Link address copied");
+      return;
     }
+
+    setStatusMessage("Unable to copy link address");
   };
 
   const closeActionMenus = () => {
@@ -3402,7 +3536,10 @@ function App() {
       <div
         className={className}
         style={style}
-        onClickCapture={(event) => {
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+
           const target = event.target;
           if (!(target instanceof Element)) {
             return;
@@ -3414,10 +3551,6 @@ function App() {
           }
 
           closeActionMenus();
-        }}
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
         }}
       >
         <button type="button" className="bookmark-menu-item" onClick={() => openEditDialog(item)} disabled={isProtectedFolder}>
@@ -3490,7 +3623,10 @@ function App() {
       <div
         className={className}
         style={style}
-        onClickCapture={(event) => {
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+
           const target = event.target;
           if (!(target instanceof Element)) {
             return;
@@ -3502,10 +3638,6 @@ function App() {
           }
 
           closeActionMenus();
-        }}
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
         }}
       >
         <button type="button" className="bookmark-menu-item" onClick={() => openEditDialog(item)}>

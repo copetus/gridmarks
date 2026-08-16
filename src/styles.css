@@ -301,7 +301,7 @@ a {
   display: flex;
   grid-column: 2;
   justify-content: center;
-  padding: 0 calc(var(--content-pad-right) + 39px) 0 calc(var(--content-pad-left) - 11px);
+  padding: 0 var(--content-pad-right) 0 var(--content-pad-left);
 }
 
 .selection-toolbar-inner {
@@ -309,7 +309,7 @@ a {
   grid-template-columns: 40px 1fr auto;
   align-items: center;
   gap: 16px;
-  width: 960px;
+  width: var(--content-width);
   max-width: 100%;
   min-height: 56px;
   margin: 0 auto;
@@ -368,13 +368,13 @@ a {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  width: 960px;
+  width: var(--content-width);
   max-width: 100%;
 }
 
 .toolbar {
   justify-content: center;
-  width: 960px;
+  width: var(--content-width);
   max-width: 100%;
   min-height: 36px;
 }

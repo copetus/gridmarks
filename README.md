@@ -1,5 +1,7 @@
 # Gridmarks
 
+**[Install Gridmarks from the Chrome Web Store](https://chromewebstore.google.com/detail/hdblccojfaagedcigakildnnclmimgek)**
+
 Gridmarks is a Chrome extension that reimagines bookmark management with a Google-like visual language and an Opera-inspired grid experience.
 
 It keeps familiar bookmark-manager capabilities such as nested folder navigation, drag and drop, range selection, edit/delete actions, and context menus, while presenting folders and bookmarks in a denser, more visual layout.
@@ -19,11 +21,11 @@ It keeps familiar bookmark-manager capabilities such as nested folder navigation
 - Shift-click bookmark range selection for grouped dragging
 - Custom extension icon set
 
-## Install The Extension
+## Developer Installation
 
-### For Non-Technical People
+### Load a Release Manually
 
-Use these steps if you just want to install the extension and do not normally work with code.
+Use these steps to load a release as an unpacked extension for development or testing.
 
 1. Go to the latest **GitHub Release** for Gridmarks and download the ready-made extension zip file.
 2. Unzip the file somewhere easy to find, such as your Desktop or Downloads folder.
@@ -36,7 +38,7 @@ Use these steps if you just want to install the extension and do not normally wo
 
 If you download a newer release later, unzip the new version and then click `Reload` on the Gridmarks card in `chrome://extensions`.
 
-### For Technical Users
+### Build from Source
 
 Use these steps if you need to build the extension yourself from source.
 
